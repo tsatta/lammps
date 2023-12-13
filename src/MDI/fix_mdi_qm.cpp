@@ -507,6 +507,9 @@ void FixMDIQM::post_force(int vflag)
 
   request_qm_energy();
 
+// ts comment
+ if (lmpunits == REAL) {
+// end ts comment
   // request forces from MDI engine
 
   ierr = MDI_Send_command("<FORCES", mdicomm);
@@ -539,6 +542,9 @@ void FixMDIQM::post_force(int vflag)
       }
     }
   }
+// ts comment
+ } //if (lmpunits == REAL) 
+// end ts comment
 
   // array_atom = fix output for peratom QM forces
   // if nexclude, some atoms are not QM atoms, zero array_atom first
@@ -858,14 +864,29 @@ void FixMDIQM::set_xqm()
   double **x = atom->x;
   int ilocal;
 
+// ts comment
+  imageint *image = atom->image;
+    double dx,dy,dz;
+    double unwrap[3];
+// end ts comment
+
   for (int i = 0; i < nqm; i++) {
     ilocal = qm2owned[i];
     if (ilocal >= 0) {
+/* original code
       xqm_mine[i][0] = x[ilocal][0];
       xqm_mine[i][1] = x[ilocal][1];
       xqm_mine[i][2] = x[ilocal][2];
 
       domain->remap(xqm_mine[i]);
+*/
+// ts comment
+        domain->unmap(x[ilocal],image[ilocal],unwrap);
+    xqm_mine[i][0] = unwrap[0]; 
+    xqm_mine[i][1] = unwrap[1];
+    xqm_mine[i][2] = unwrap[2];
+// end ts comment
+      //utils::logmesg(lmp,"ts comment bf xqm_mine[i][0] {} {} \n",i,xqm_mine[i][0]);
 
       xqm_mine[i][0] *= lmp2mdi_length;
       xqm_mine[i][1] *= lmp2mdi_length;
@@ -983,10 +1004,12 @@ void FixMDIQM::send_box()
       if (ierr) error->all(FLERR, "MDI: >CELL_DISPL data");
     }
 
+/* ts comment
     ierr = MDI_Send_command(">CELL", mdicomm);
     if (ierr) error->all(FLERR, "MDI: >CELL command");
     ierr = MDI_Send(qm_cell, 9, MDI_DOUBLE, mdicomm);
     if (ierr) error->all(FLERR, "MDI: >CELL data");
+end ts comment */
 
   } else if (domain->xperiodic == 1 || domain->yperiodic == 1 || domain->zperiodic == 1) {
     error->all(FLERR, "MDI requires fully periodic or fully non-periodic system");
