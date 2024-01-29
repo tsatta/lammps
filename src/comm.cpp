@@ -108,6 +108,7 @@ Comm::Comm(LAMMPS *lmp) : Pointers(lmp)
 
   if (me == 0)
     utils::logmesg(lmp,"  using {} OpenMP thread(s) per MPI task\n",nthreads);
+    utils::logmesg(lmp,"  ts comment nproc = {} \n",nprocs);
 #endif
 
 }
