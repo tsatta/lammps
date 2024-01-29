@@ -1015,12 +1015,12 @@ void FixMDIQM::send_box()
       if (ierr) error->all(FLERR, "MDI: >CELL_DISPL data");
     }
 
-/* ts comment
+//* ts comment
     ierr = MDI_Send_command(">CELL", mdicomm);
     if (ierr) error->all(FLERR, "MDI: >CELL command");
     ierr = MDI_Send(qm_cell, 9, MDI_DOUBLE, mdicomm);
     if (ierr) error->all(FLERR, "MDI: >CELL data");
-end ts comment */
+//end ts comment */
 
   } else if (domain->xperiodic == 1 || domain->yperiodic == 1 || domain->zperiodic == 1) {
     error->all(FLERR, "MDI requires fully periodic or fully non-periodic system");
