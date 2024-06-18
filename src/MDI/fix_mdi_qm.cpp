@@ -414,7 +414,9 @@ void FixMDIQM::init()
 
   if (new_system) {
     send_natoms();
-    send_box();
+// ts comment
+    //send_box();
+// end ts comment
     if (elements && elements_exists)
       send_elements();
     else if (types_exists)
@@ -484,7 +486,9 @@ void FixMDIQM::post_force(int vflag)
 
     send_natoms();
     set_box();
-    send_box();
+// ts comment
+    //send_box();
+// end ts comment
     if (elements && elements_exists) {
       set_eqm();
       send_elements();
@@ -500,7 +504,9 @@ void FixMDIQM::post_force(int vflag)
 
   } else if (domain->box_change_size || domain->box_change_shape) {
     set_box();
-    send_box();
+// ts comment
+    //send_box();
+// end ts comment
   }
 
   // send current coords of QM atoms to MDI engine
@@ -877,7 +883,7 @@ void FixMDIQM::set_xqm()
 
 // ts comment
   imageint *image = atom->image;
-    double dx,dy,dz;
+    //double dx,dy,dz;
     double unwrap[3];
 // end ts comment
 
