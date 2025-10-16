@@ -16,12 +16,8 @@
 
 #include "atom_kokkos.h"
 #include "update.h"
-#include "modify.h"
-#include "input.h"
-#include "memory_kokkos.h"
 #include "error.h"
 #include "atom_masks.h"
-#include "kokkos_base.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -54,11 +50,11 @@ void FixViscousKokkos<DeviceType>::init()
 {
   FixViscous::init();
 
-  k_gamma = Kokkos::DualView<double*, Kokkos::LayoutRight, DeviceType>("FixViscousKokkos:gamma",atom->ntypes+1);
+  k_gamma = Kokkos::DualView<KK_FLOAT*, Kokkos::LayoutRight, DeviceType>("FixViscousKokkos:gamma",atom->ntypes+1);
 
-  for (int i = 1; i <= atom->ntypes; i++) k_gamma.h_view(i) = gamma[i];
+  for (int i = 1; i <= atom->ntypes; i++) k_gamma.view_host()(i) = gamma[i];
 
-  k_gamma.template modify<LMPHostType>();
+  k_gamma.modify_host();
   k_gamma.template sync<DeviceType>();
 
   if (utils::strmatch(update->integrate_style,"^respa"))
@@ -90,7 +86,7 @@ template<class DeviceType>
 KOKKOS_INLINE_FUNCTION
 void FixViscousKokkos<DeviceType>::operator()(TagFixViscous, const int &i) const {
   if (mask[i] & groupbit) {
-    double drag = k_gamma.d_view(type[i]);
+    KK_FLOAT drag = k_gamma.view_device()(type[i]);
     f(i,0) -= drag*v(i,0);
     f(i,1) -= drag*v(i,1);
     f(i,2) -= drag*v(i,2);

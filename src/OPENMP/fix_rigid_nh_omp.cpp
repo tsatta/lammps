@@ -30,7 +30,6 @@
 #include "kspace.h"
 #include "math_const.h"
 #include "math_extra.h"
-#include "modify.h"
 #include "rigid_const.h"
 #include "update.h"
 
@@ -47,7 +46,7 @@ using namespace FixConst;
 using namespace MathConst;
 using namespace RigidConst;
 
-typedef struct { double x,y,z; } dbl3_t;
+using dbl3_t = struct { double x,y,z; };
 
 /* ----------------------------------------------------------------------
    perform preforce velocity Verlet integration

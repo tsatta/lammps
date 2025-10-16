@@ -50,6 +50,7 @@
 #include "npair_half_bin_newton_ssa.h"
 #include "pair_dpd_fdt.h"
 #include "pair_dpd_fdt_energy.h"
+#include "random_external_state.h"
 #include "update.h"
 
 #include <cstring>
@@ -59,8 +60,7 @@ using namespace LAMMPS_NS;
 using namespace FixConst;
 using namespace random_external_state;
 
-static constexpr double EPSILON = 1.0e-10;
-#define EPSILON_SQUARED ((EPSILON) * (EPSILON))
+static constexpr double EPSILON_SQUARED = 1.0e-20;
 
 static const char cite_fix_shardlow[] =
   "fix shardlow command: doi:10.1016/j.cpc.2014.03.029, doi:10.1063/1.3660209\n\n"
@@ -85,8 +85,8 @@ static const char cite_fix_shardlow[] =
 /* ---------------------------------------------------------------------- */
 
 FixShardlow::FixShardlow(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg), pairDPD(nullptr), pairDPDE(nullptr), v_t0(nullptr)
-  ,rand_state(nullptr)
+  Fix(lmp, narg, arg), pairDPD(nullptr), pairDPDE(nullptr), v_t0(nullptr),
+  rand_state(nullptr)
 {
   if (lmp->citeme) lmp->citeme->add(cite_fix_shardlow);
 
@@ -549,7 +549,7 @@ void FixShardlow::initial_integrate(int /*vflag*/)
                     "Either reduce the number of processors requested, or change the cutoff/skin: "
                     "rcut= {} bbx= {} bby= {} bbz= {}\n", rcut, bbx, bby, bbz);
 
-  auto np_ssa = dynamic_cast<NPairHalfBinNewtonSSA*>(list->np);
+  auto *np_ssa = dynamic_cast<NPairHalfBinNewtonSSA*>(list->np);
   if (!np_ssa) error->one(FLERR, "NPair wasn't a NPairHalfBinNewtonSSA object");
   int ssa_phaseCt = np_ssa->ssa_phaseCt;
   int *ssa_phaseLen = np_ssa->ssa_phaseLen;

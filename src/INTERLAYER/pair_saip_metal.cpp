@@ -33,10 +33,6 @@
 using namespace LAMMPS_NS;
 using namespace InterLayer;
 
-static constexpr int MAXLINE = 1024;
-static constexpr int DELTA = 4;
-static constexpr int PGDELTA = 1;
-
 static const char cite_saip[] =
     "saip/metal potential: doi:10.1021/acs.jctc.1c00622\n\n"
     "@Article{Ouyang2021\n"
@@ -68,7 +64,7 @@ void PairSAIPMETAL::settings(int narg, char **arg)
     error->all(FLERR, "Pair style saip/metal must be used as sub-style with hybrid/overlay");
 
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
-  if (narg == 2) tap_flag = utils::numeric(FLERR, arg[1], false, lmp);
+  if (narg == 2) tap_flag = utils::inumeric(FLERR, arg[1], false, lmp);
 }
 
 /* ----------------------------------------------------------------------

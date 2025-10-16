@@ -27,11 +27,11 @@ namespace LAMMPS_NS {
 class ComputePACE : public Compute {
  public:
   ComputePACE(class LAMMPS *, int, char **);
-  ~ComputePACE();
-  void init();
-  void init_list(int, class NeighList *);
-  void compute_array();
-  double memory_usage();
+  ~ComputePACE() override;
+  void init() override;
+  void init_list(int, class NeighList *) override;
+  void compute_array() override;
+  double memory_usage() override;
 
  private:
   int natoms, nmax, size_peratom, lastcol;
@@ -43,10 +43,11 @@ class ComputePACE : public Compute {
   double **pace_peratom;
   int *map;    // map types to [0,nelements)
   int bikflag, bik_rows, dgradflag, dgrad_rows;
-  double *cg;
   double cutmax;
+
   Compute *c_pe;
   Compute *c_virial;
+  std::string id_virial;
 
   void dbdotr_compute();
   struct ACECimpl *acecimpl;

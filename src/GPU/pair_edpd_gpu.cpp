@@ -58,8 +58,6 @@ void edpd_gpu_get_extra_data(double *host_T, double *host_cv);
 void edpd_gpu_update_flux(void **flux_ptr);
 double edpd_gpu_bytes();
 
-static constexpr double EPSILON = 1.0e-10;
-
 /* ---------------------------------------------------------------------- */
 
 PairEDPDGPU::PairEDPDGPU(LAMMPS *lmp) : PairEDPD(lmp), gpu_mode(GPU_FORCE)
@@ -134,12 +132,12 @@ void PairEDPDGPU::compute(int eflag, int vflag)
 
   int nlocal = atom->nlocal;
   if (acc_float) {
-    auto flux_ptr = (float *)flux_pinned;
+    auto *flux_ptr = (float *)flux_pinned;
     for (int i = 0; i < nlocal; i++)
       Q[i] = flux_ptr[i];
 
   } else {
-    auto flux_ptr = (double *)flux_pinned;
+    auto *flux_ptr = (double *)flux_pinned;
     for (int i = 0; i < nlocal; i++)
       Q[i] = flux_ptr[i];
   }

@@ -29,9 +29,8 @@
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
-#define MAX_REAX_BONDS      30
-#define MIN_REAX_BONDS      15
-#define MIN_REAX_HBONDS     25
+static constexpr int MIN_REAX_BONDS  = 15;
+static constexpr int MIN_REAX_HBONDS = 25;
 
 /* ---------------------------------------------------------------------- */
 
@@ -44,7 +43,7 @@ FixReaxFF::FixReaxFF(LAMMPS *lmp,int narg, char **arg) :
   oldnmax = 0;
   num_bonds = nullptr;
   num_hbonds = nullptr;
-  grow_arrays(atom->nmax);
+  FixReaxFF::grow_arrays(atom->nmax);
   atom->add_callback(Atom::GROW);
 
   // initialize arrays to MIN so atom migration is OK the 1st time

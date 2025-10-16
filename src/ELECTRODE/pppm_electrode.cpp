@@ -12,7 +12,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing authors: Ludwig Ahrens-Iwers (TUHH), Shern Tee (UQ), Robert Meißner (TUHH)
+   Contributing authors: Ludwig Ahrens-Iwers (TUHH), Shern Tee (UQ), Robert Meissner (TUHH)
 ------------------------------------------------------------------------- */
 
 #include "pppm_electrode.h"
@@ -20,6 +20,7 @@
 #include "angle.h"
 #include "atom.h"
 #include "bond.h"
+#include "boundary_correction.h"
 #include "citeme.h"
 #include "comm.h"
 #include "domain.h"
@@ -47,15 +48,8 @@ using namespace MathSpecial;
 
 static constexpr int MAXORDER = 7;
 static constexpr int OFFSET = 16384;
-static constexpr double LARGE = 10000.0;
-static constexpr double SMALL = 0.00001;
 static constexpr double EPS_HOC = 1.0e-7;
-
-enum { REVERSE_RHO };
-enum { FORWARD_IK, FORWARD_AD, FORWARD_IK_PERATOM, FORWARD_AD_PERATOM };
-
 static constexpr FFT_SCALAR ZEROF = 0.0;
-static constexpr FFT_SCALAR ONEF = 1.0;
 
 static const char cite_pppm_electrode[] =
     "kspace_style pppm/electrode command:\n\n"
@@ -92,7 +86,7 @@ PPPMElectrode::~PPPMElectrode()
 {
   if (copymode) return;
 
-  deallocate();
+  PPPMElectrode::deallocate();
   if (peratom_allocate_flag) deallocate_peratom();
   if (group_allocate_flag) deallocate_groups();
   memory->destroy(part2grid);
@@ -142,7 +136,7 @@ void PPPMElectrode::init()
   pair_check();
 
   int itmp = 0;
-  double *p_cutoff = (double *) force->pair->extract("cut_coul", itmp);
+  auto *p_cutoff = (double *) force->pair->extract("cut_coul", itmp);
   if (p_cutoff == nullptr) error->all(FLERR, "KSpace style is incompatible with Pair style");
   cutoff = *p_cutoff;
 
@@ -154,7 +148,7 @@ void PPPMElectrode::init()
   if (tip4pflag) {
     if (me == 0) utils::logmesg(lmp, "  extracting TIP4P info from pair style\n");
 
-    double *p_qdist = (double *) force->pair->extract("qdist", itmp);
+    auto *p_qdist = (double *) force->pair->extract("qdist", itmp);
     int *p_typeO = (int *) force->pair->extract("typeO", itmp);
     int *p_typeH = (int *) force->pair->extract("typeH", itmp);
     int *p_typeA = (int *) force->pair->extract("typeA", itmp);
@@ -440,6 +434,7 @@ void PPPMElectrode::compute(int eflag, int vflag)
 
   start_compute();
 
+  /*
   if (compute_vector_called && last_invert_source) {
     // electrolyte_density_brick is filled, so we can grab only electrode atoms.
     // Does not work for direct cg algorithm because electrode charges change after compute_vector.
@@ -455,15 +450,17 @@ void PPPMElectrode::compute(int eflag, int vflag)
           density_brick[nz][ny][nx] += electrolyte_density_brick[nz][ny][nx];
         }
   } else {
-    make_rho();
+  */
+  particle_map();
+  make_rho();
 
-    // all procs communicate density values from their ghost cells
-    //   to fully sum contribution in their 3d bricks
-    // remap from 3d decomposition to FFT decomposition
+  // all procs communicate density values from their ghost cells
+  //   to fully sum contribution in their 3d bricks
+  // remap from 3d decomposition to FFT decomposition
 
-    gc->reverse_comm(Grid3d::KSPACE, this, REVERSE_RHO, 1, sizeof(FFT_SCALAR), gc_buf1, gc_buf2,
-                     MPI_FFT_SCALAR);
-  }
+  gc->reverse_comm(Grid3d::KSPACE, this, REVERSE_RHO, 1, sizeof(FFT_SCALAR), gc_buf1, gc_buf2,
+                   MPI_FFT_SCALAR);
+  //}
 
   brick2fft();
 
@@ -586,6 +583,7 @@ void PPPMElectrode::compute_vector(double *vec, int sensor_grpbit, int source_gr
   // electrolyte density (without writing an additional function)
   FFT_SCALAR ***density_brick_real = density_brick;
   FFT_SCALAR *density_fft_real = density_fft;
+  particle_map();
   make_rho_in_brick(source_grpbit, electrolyte_density_brick, invert_source);
   density_brick = electrolyte_density_brick;
   density_fft = electrolyte_density_fft;
@@ -671,7 +669,8 @@ void PPPMElectrode::compute_matrix(bigint *imat, double **matrix, bool timer_fla
   // fft green's function k -> r (double)
   double *greens_real;
   memory->create(greens_real, nz_pppm * ny_pppm * nx_pppm, "pppm/electrode:greens_real");
-  memset(greens_real, 0, (std::size_t)nz_pppm * (std::size_t)ny_pppm * (std::size_t)nx_pppm * sizeof(double));
+  memset(greens_real, 0,
+         (std::size_t) nz_pppm * (std::size_t) ny_pppm * (std::size_t) nx_pppm * sizeof(double));
   for (int i = 0, n = 0; i < nfft; i++) {
     work2[n++] = greensfn[i];
     work2[n++] = ZEROF;
@@ -684,7 +683,7 @@ void PPPMElectrode::compute_matrix(bigint *imat, double **matrix, bool timer_fla
         n += 2;
       }
   MPI_Allreduce(MPI_IN_PLACE, greens_real, nz_pppm * ny_pppm * nx_pppm, MPI_DOUBLE, MPI_SUM, world);
-  int const nlocal = atom->nlocal;
+  const int nlocal = atom->nlocal;
   int nmat = std::count_if(&imat[0], &imat[nlocal], [](int x) {
     return x >= 0;
   });
@@ -713,13 +712,13 @@ void PPPMElectrode::compute_matrix(bigint *imat, double **matrix, bool timer_fla
 /* ----------------------------------------------------------------------*/
 
 void PPPMElectrode::one_step_multiplication(bigint *imat, double *greens_real, double **x_ele,
-                                            double **matrix, int const nmat, bool timer_flag)
+                                            double **matrix, const int nmat, bool timer_flag)
 {
   // map green's function in real space from mesh to particle positions
   // with matrix multiplication 'W^T G W' in one steps. Uses less memory than
   // two_step_multiplication
   //
-  int const nlocal = atom->nlocal;
+  const int nlocal = atom->nlocal;
   double **x = atom->x;
   MPI_Barrier(world);
   double step1_time = MPI_Wtime();
@@ -731,7 +730,7 @@ void PPPMElectrode::one_step_multiplication(bigint *imat, double *greens_real, d
     if (jpos < 0) continue;
     j_list.push_back(j);
   }
-  int const nj_local = j_list.size();
+  const int nj_local = j_list.size();
 
   FFT_SCALAR ***rho1d_j;
   memory->create(rho1d_j, nj_local, 3, order, "pppm/electrode:rho1d_j");
@@ -754,8 +753,8 @@ void PPPMElectrode::one_step_multiplication(bigint *imat, double *greens_real, d
   // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
   // (dx,dy,dz) = distance to "lower left" grid pt
   // (mx,my,mz) = global coords of moving stencil pt
-  int const order2 = order * order;
-  int const order6 = order2 * order2 * order2;
+  const int order2 = order * order;
+  const int order6 = order2 * order2 * order2;
   double *amesh;
   memory->create(amesh, order6, "pppm/electrode:amesh");
   for (int ipos = 0; ipos < nmat; ipos++) {
@@ -832,13 +831,13 @@ void PPPMElectrode::build_amesh(const int dx,    // = njx - nix
 
   for (int iz = 0; iz < order; iz++)
     for (int jz = 0; jz < order; jz++) {
-      int const mz = fmod(dz + jz - iz, nz_pppm) * nx_pppm * ny_pppm;
+      const int mz = fmod(dz + jz - iz, nz_pppm) * nx_pppm * ny_pppm;
       for (int iy = 0; iy < order; iy++)
         for (int jy = 0; jy < order; jy++) {
-          int const my = fmod(dy + jy - iy, ny_pppm) * nx_pppm;
+          const int my = fmod(dy + jy - iy, ny_pppm) * nx_pppm;
           for (int ix = 0; ix < order; ix++)
             for (int jx = 0; jx < order; jx++) {
-              int const mx = fmod(dx + jx - ix, nx_pppm);
+              const int mx = fmod(dx + jx - ix, nx_pppm);
               amesh[ind_amesh] = greens_real[mz + my + mx];
               ind_amesh++;
             }
@@ -849,12 +848,12 @@ void PPPMElectrode::build_amesh(const int dx,    // = njx - nix
 /* ----------------------------------------------------------------------*/
 
 void PPPMElectrode::two_step_multiplication(bigint *imat, double *greens_real, double **x_ele,
-                                            double **matrix, int const nmat, bool timer_flag)
+                                            double **matrix, const int nmat, bool timer_flag)
 {
   // map green's function in real space from mesh to particle positions
   // with matrix multiplication 'W^T G W' in two steps. gw is result of
   // first multiplication.
-  int const nlocal = atom->nlocal;
+  const int nlocal = atom->nlocal;
   MPI_Barrier(world);
   double step1_time = MPI_Wtime();
   int nx_ele = nxhi_out - nxlo_out + 1;    // nx_pppm + order + 1;
@@ -864,7 +863,7 @@ void PPPMElectrode::two_step_multiplication(bigint *imat, double *greens_real, d
 
   double **gw;
   memory->create(gw, nmat, nxyz, "pppm/electrode:gw");
-  memset(&(gw[0][0]), 0, (std::size_t)nmat * (std::size_t)nxyz * sizeof(double));
+  memset(&(gw[0][0]), 0, (std::size_t) nmat * (std::size_t) nxyz * sizeof(double));
 
   auto fmod = [](int x, int n) {    // fast unsigned mod
     int r = abs(x);
@@ -893,15 +892,15 @@ void PPPMElectrode::two_step_multiplication(bigint *imat, double *greens_real, d
     for (int mjz = nzlo_out; mjz <= nzhi_out; mjz++) {
       for (int ni = nlower; ni <= nupper; ni++) {
         double const iz0 = rho1d[2][ni];
-        int const mz = fmod(mjz - ni - niz, nz_pppm);
+        const int mz = fmod(mjz - ni - niz, nz_pppm);
         for (int mjy = nylo_out; mjy <= nyhi_out; mjy++) {
           for (int mi = nlower; mi <= nupper; mi++) {
             double const iy0 = iz0 * rho1d[1][mi];
-            int const my = fmod(mjy - mi - niy, ny_pppm);
+            const int my = fmod(mjy - mi - niy, ny_pppm);
             for (int mjx = nxlo_out; mjx <= nxhi_out; mjx++) {
               for (int li = nlower; li <= nupper; li++) {
                 double const ix0 = iy0 * rho1d[0][li];
-                int const mx = fmod(mjx - li - nix, nx_pppm);
+                const int mx = fmod(mjx - li - nix, nx_pppm);
                 gw[ipos][nx_ele * ny_ele * (mjz - nzlo_out) + nx_ele * (mjy - nylo_out) +
                          (mjx - nxlo_out)] +=
                     ix0 * greens_real[mz * nx_pppm * ny_pppm + my * nx_pppm + mx];
@@ -983,17 +982,18 @@ void PPPMElectrode::allocate()
   // returns local owned and ghost grid bounds
   // setup communication patterns and buffers
 
-  gc = new Grid3d(lmp,world,nx_pppm,ny_pppm,nz_pppm,
-                  nxlo_in,nxhi_in,nylo_in,nyhi_in,nzlo_in,nzhi_in,
-                  nxlo_out,nxhi_out,nylo_out,nyhi_out,nzlo_out,nzhi_out);
+  gc = new Grid3d(lmp, world, nx_pppm, ny_pppm, nz_pppm, nxlo_in, nxhi_in, nylo_in, nyhi_in,
+                  nzlo_in, nzhi_in, nxlo_out, nxhi_out, nylo_out, nyhi_out, nzlo_out, nzhi_out);
 
-  gc->setup_comm(ngc_buf1,ngc_buf2);
+  gc->setup_comm(ngc_buf1, ngc_buf2);
 
-  if (differentiation_flag) npergrid = 1;
-  else npergrid = 3;
+  if (differentiation_flag)
+    npergrid = 1;
+  else
+    npergrid = 3;
 
-  memory->create(gc_buf1,npergrid*ngc_buf1,"pppm:gc_buf1");
-  memory->create(gc_buf2,npergrid*ngc_buf2,"pppm:gc_buf2");
+  memory->create(gc_buf1, npergrid * ngc_buf1, "pppm:gc_buf1");
+  memory->create(gc_buf2, npergrid * ngc_buf2, "pppm:gc_buf2");
 
   // tally local grid sizes
   // ngrid = count of owned+ghost grid cells on this proc
@@ -1002,67 +1002,63 @@ void PPPMElectrode::allocate()
   // nfft = FFT points in x-pencil FFT decomposition on this proc
   // nfft_both = greater of nfft and nfft_brick
 
-  ngrid = (nxhi_out-nxlo_out+1) * (nyhi_out-nylo_out+1) *
-    (nzhi_out-nzlo_out+1);
+  ngrid = (nxhi_out - nxlo_out + 1) * (nyhi_out - nylo_out + 1) * (nzhi_out - nzlo_out + 1);
 
-  nfft_brick = (nxhi_in-nxlo_in+1) * (nyhi_in-nylo_in+1) *
-    (nzhi_in-nzlo_in+1);
+  nfft_brick = (nxhi_in - nxlo_in + 1) * (nyhi_in - nylo_in + 1) * (nzhi_in - nzlo_in + 1);
 
-  nfft = (nxhi_fft-nxlo_fft+1) * (nyhi_fft-nylo_fft+1) *
-    (nzhi_fft-nzlo_fft+1);
+  nfft = (nxhi_fft - nxlo_fft + 1) * (nyhi_fft - nylo_fft + 1) * (nzhi_fft - nzlo_fft + 1);
 
-  nfft_both = MAX(nfft,nfft_brick);
+  nfft_both = MAX(nfft, nfft_brick);
 
   // allocate distributed grid data
 
-  memory->create3d_offset(density_brick,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-                          nxlo_out,nxhi_out,"pppm:density_brick");
+  memory->create3d_offset(density_brick, nzlo_out, nzhi_out, nylo_out, nyhi_out, nxlo_out, nxhi_out,
+                          "pppm:density_brick");
 
-  memory->create(density_fft,nfft_both,"pppm:density_fft");
-  memory->create(greensfn,nfft_both,"pppm:greensfn");
-  memory->create(work1,2*nfft_both,"pppm:work1");
-  memory->create(work2,2*nfft_both,"pppm:work2");
-  memory->create(vg,nfft_both,6,"pppm:vg");
+  memory->create(density_fft, nfft_both, "pppm:density_fft");
+  memory->create(greensfn, nfft_both, "pppm:greensfn");
+  memory->create(work1, 2 * nfft_both, "pppm:work1");
+  memory->create(work2, 2 * nfft_both, "pppm:work2");
+  memory->create(vg, nfft_both, 6, "pppm:vg");
 
   if (triclinic == 0) {
-    memory->create1d_offset(fkx,nxlo_fft,nxhi_fft,"pppm:fkx");
-    memory->create1d_offset(fky,nylo_fft,nyhi_fft,"pppm:fky");
-    memory->create1d_offset(fkz,nzlo_fft,nzhi_fft,"pppm:fkz");
+    memory->create1d_offset(fkx, nxlo_fft, nxhi_fft, "pppm:fkx");
+    memory->create1d_offset(fky, nylo_fft, nyhi_fft, "pppm:fky");
+    memory->create1d_offset(fkz, nzlo_fft, nzhi_fft, "pppm:fkz");
   } else {
-    memory->create(fkx,nfft_both,"pppm:fkx");
-    memory->create(fky,nfft_both,"pppm:fky");
-    memory->create(fkz,nfft_both,"pppm:fkz");
+    memory->create(fkx, nfft_both, "pppm:fkx");
+    memory->create(fky, nfft_both, "pppm:fky");
+    memory->create(fkz, nfft_both, "pppm:fkz");
   }
 
   if (differentiation_flag == 1) {
-    memory->create3d_offset(u_brick,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-                          nxlo_out,nxhi_out,"pppm:u_brick");
+    memory->create3d_offset(u_brick, nzlo_out, nzhi_out, nylo_out, nyhi_out, nxlo_out, nxhi_out,
+                            "pppm:u_brick");
 
-    memory->create(sf_precoeff1,nfft_both,"pppm:sf_precoeff1");
-    memory->create(sf_precoeff2,nfft_both,"pppm:sf_precoeff2");
-    memory->create(sf_precoeff3,nfft_both,"pppm:sf_precoeff3");
-    memory->create(sf_precoeff4,nfft_both,"pppm:sf_precoeff4");
-    memory->create(sf_precoeff5,nfft_both,"pppm:sf_precoeff5");
-    memory->create(sf_precoeff6,nfft_both,"pppm:sf_precoeff6");
+    memory->create(sf_precoeff1, nfft_both, "pppm:sf_precoeff1");
+    memory->create(sf_precoeff2, nfft_both, "pppm:sf_precoeff2");
+    memory->create(sf_precoeff3, nfft_both, "pppm:sf_precoeff3");
+    memory->create(sf_precoeff4, nfft_both, "pppm:sf_precoeff4");
+    memory->create(sf_precoeff5, nfft_both, "pppm:sf_precoeff5");
+    memory->create(sf_precoeff6, nfft_both, "pppm:sf_precoeff6");
 
   } else {
-    memory->create3d_offset(vdx_brick,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-                            nxlo_out,nxhi_out,"pppm:vdx_brick");
-    memory->create3d_offset(vdy_brick,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-                            nxlo_out,nxhi_out,"pppm:vdy_brick");
-    memory->create3d_offset(vdz_brick,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-                            nxlo_out,nxhi_out,"pppm:vdz_brick");
+    memory->create3d_offset(vdx_brick, nzlo_out, nzhi_out, nylo_out, nyhi_out, nxlo_out, nxhi_out,
+                            "pppm:vdx_brick");
+    memory->create3d_offset(vdy_brick, nzlo_out, nzhi_out, nylo_out, nyhi_out, nxlo_out, nxhi_out,
+                            "pppm:vdy_brick");
+    memory->create3d_offset(vdz_brick, nzlo_out, nzhi_out, nylo_out, nyhi_out, nxlo_out, nxhi_out,
+                            "pppm:vdz_brick");
   }
 
   // summation coeffs
 
   order_allocated = order;
-  if (!stagger_flag) memory->create(gf_b,order,"pppm:gf_b");
-  memory->create2d_offset(rho1d,3,-order/2,order/2,"pppm:rho1d");
-  memory->create2d_offset(drho1d,3,-order/2,order/2,"pppm:drho1d");
-  memory->create2d_offset(rho_coeff,order,(1-order)/2,order/2,"pppm:rho_coeff");
-  memory->create2d_offset(drho_coeff,order,(1-order)/2,order/2,
-                          "pppm:drho_coeff");
+  if (!stagger_flag) memory->create(gf_b, order, "pppm:gf_b");
+  memory->create2d_offset(rho1d, 3, -order / 2, order / 2, "pppm:rho1d");
+  memory->create2d_offset(drho1d, 3, -order / 2, order / 2, "pppm:drho1d");
+  memory->create2d_offset(rho_coeff, order, (1 - order) / 2, order / 2, "pppm:rho_coeff");
+  memory->create2d_offset(drho_coeff, order, (1 - order) / 2, order / 2, "pppm:drho_coeff");
 
   // create 2 FFTs and a Remap
   // 1st FFT keeps data in FFT decomposition
@@ -1071,20 +1067,17 @@ void PPPMElectrode::allocate()
 
   int tmp;
 
-  fft1 = new FFT3d(lmp,world,nx_pppm,ny_pppm,nz_pppm,
-                   nxlo_fft,nxhi_fft,nylo_fft,nyhi_fft,nzlo_fft,nzhi_fft,
-                   nxlo_fft,nxhi_fft,nylo_fft,nyhi_fft,nzlo_fft,nzhi_fft,
-                   0,0,&tmp,collective_flag);
+  fft1 = new FFT3d(lmp, world, nx_pppm, ny_pppm, nz_pppm, nxlo_fft, nxhi_fft, nylo_fft, nyhi_fft,
+                   nzlo_fft, nzhi_fft, nxlo_fft, nxhi_fft, nylo_fft, nyhi_fft, nzlo_fft, nzhi_fft,
+                   0, 0, &tmp, collective_flag);
 
-  fft2 = new FFT3d(lmp,world,nx_pppm,ny_pppm,nz_pppm,
-                   nxlo_fft,nxhi_fft,nylo_fft,nyhi_fft,nzlo_fft,nzhi_fft,
-                   nxlo_in,nxhi_in,nylo_in,nyhi_in,nzlo_in,nzhi_in,
-                   0,0,&tmp,collective_flag);
+  fft2 = new FFT3d(lmp, world, nx_pppm, ny_pppm, nz_pppm, nxlo_fft, nxhi_fft, nylo_fft, nyhi_fft,
+                   nzlo_fft, nzhi_fft, nxlo_in, nxhi_in, nylo_in, nyhi_in, nzlo_in, nzhi_in, 0, 0,
+                   &tmp, collective_flag);
 
-  remap = new Remap(lmp,world,
-                    nxlo_in,nxhi_in,nylo_in,nyhi_in,nzlo_in,nzhi_in,
-                    nxlo_fft,nxhi_fft,nylo_fft,nyhi_fft,nzlo_fft,nzhi_fft,
-                    1,0,0,FFT_PRECISION,collective_flag);
+  remap = new Remap(lmp, world, nxlo_in, nxhi_in, nylo_in, nyhi_in, nzlo_in, nzhi_in, nxlo_fft,
+                    nxhi_fft, nylo_fft, nyhi_fft, nzlo_fft, nzhi_fft, 1, 0, 0, FFT_PRECISION,
+                    collective_flag);
 
   // ELECTRODE specific allocations
 
@@ -1570,12 +1563,8 @@ void PPPMElectrode::set_grid_local()
   // nlo_fft,nhi_fft = lower/upper limit of the section
   //   of the global FFT mesh that I own in x-pencil decomposition
 
-  int npey_fft, npez_fft;
-  if (nz_pppm >= nprocs) {
-    npey_fft = 1;
-    npez_fft = nprocs;
-  } else
-    procs2grid2d(nprocs, ny_pppm, nz_pppm, &npey_fft, &npez_fft);
+  int npey_fft = 1, npez_fft = nprocs;
+  procs2grid2d(nprocs, ny_pppm, nz_pppm, npey_fft, npez_fft);
 
   int me_y = me % npey_fft;
   int me_z = me / npey_fft;

@@ -30,6 +30,7 @@
 #include "error.h"
 #include "fix.h"
 #include "force.h"
+#include "info.h"
 #include "math_const.h"
 #include "memory.h"
 #include "modify.h"
@@ -44,12 +45,6 @@ using MathConst::MY_PI;
 enum{ NONE, RLINEAR, RSQ };
 
 static constexpr int MAXLINE = 1024;
-
-#ifdef DBL_EPSILON
-static constexpr double MY_EPSILON = 10.0*DBL_EPSILON;
-#else
-static constexpr double MY_EPSILON = 10.0*2.220446049250313e-16;
-#endif
 
 #define oneFluidParameter (-1)
 #define isOneFluid(_site) ( (_site) == oneFluidParameter )
@@ -467,7 +462,9 @@ void PairMultiLucyRX::coeff(int narg, char **arg)
 
 double PairMultiLucyRX::init_one(int i, int j)
 {
-  if (setflag[i][j] == 0) error->all(FLERR,"All pair coeffs are not set");
+  if (setflag[i][j] == 0)
+    error->all(FLERR, Error::NOLASTLINE,
+               "All pair coeffs are not set. Status:\n" + Info::get_pair_coeff_status(lmp));
 
   tabindex[j][i] = tabindex[i][j];
 
@@ -618,20 +615,20 @@ void PairMultiLucyRX::param_extract(Table *tb, char *line)
   while (word) {
     if (strcmp(word,"N") == 0) {
       word = strtok(nullptr," \t\n\r\f");
-      tb->ninput = atoi(word);
+      tb->ninput = std::stoi(word);
     } else if (strcmp(word,"R") == 0 || strcmp(word,"RSQ") == 0) {
       if (strcmp(word,"R") == 0) tb->rflag = RLINEAR;
       else if (strcmp(word,"RSQ") == 0) tb->rflag = RSQ;
       word = strtok(nullptr," \t\n\r\f");
-      tb->rlo = atof(word);
+      tb->rlo = std::stod(word);
       word = strtok(nullptr," \t\n\r\f");
-      tb->rhi = atof(word);
+      tb->rhi = std::stod(word);
     } else if (strcmp(word,"FP") == 0) {
       tb->fpflag = 1;
       word = strtok(nullptr," \t\n\r\f");
-      tb->fplo = atof(word);
+      tb->fplo = std::stod(word);
       word = strtok(nullptr," \t\n\r\f");
-      tb->fphi = atof(word);
+      tb->fphi = std::stod(word);
     } else {
       printf("WORD: %s\n",word);
       error->one(FLERR,"Invalid keyword in pair table parameters");
@@ -760,7 +757,7 @@ void PairMultiLucyRX::spline(double *x, double *y, int n,
 {
   int i,k;
   double p,qn,sig,un;
-  auto u = new double[n];
+  auto *u = new double[n];
 
   if (yp1 > 0.99e30) y2[0] = u[0] = 0.0;
   else {

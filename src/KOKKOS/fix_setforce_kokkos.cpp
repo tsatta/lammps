@@ -17,7 +17,6 @@
 #include "atom_kokkos.h"
 #include "update.h"
 #include "modify.h"
-#include "domain.h"
 #include "region.h"
 #include "input.h"
 #include "variable.h"
@@ -25,8 +24,6 @@
 #include "error.h"
 #include "atom_masks.h"
 #include "kokkos_base.h"
-
-#include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -87,7 +84,7 @@ void FixSetForceKokkos<DeviceType>::post_force(int /*vflag*/)
   // update region if necessary
 
   if (region) {
-    if (!utils::strmatch(region->style, "^block"))
+    if (!(utils::strmatch(region->style, "^block") || utils::strmatch(region->style, "^sphere")))
       error->all(FLERR,"Cannot (yet) use {}-style region with fix setforce/kk",region->style);
     region->prematch();
     DAT::tdual_int_1d k_match = DAT::tdual_int_1d("setforce:k_match",nlocal);
@@ -136,7 +133,7 @@ void FixSetForceKokkos<DeviceType>::post_force(int /*vflag*/)
     modify->addstep_compute(update->ntimestep + 1);
 
     if (varflag == ATOM) {  // this can be removed when variable class is ported to Kokkos
-      k_sforce.modify<LMPHostType>();
+      k_sforce.modify_host();
       k_sforce.sync<DeviceType>();
     }
 

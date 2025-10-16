@@ -14,7 +14,7 @@
 
 /* ----------------------------------------------------------------------
    The SMTBQ code has been developed with the financial support of  CNRS and
-   of the Regional Council of Burgundy (Convention n¡ 2010-9201AAO037S03129)
+   of the Regional Council of Burgundy (Convention No 2010-9201AAO037S03129)
 
    Copyright (2015)
    Universite de Bourgogne : Nicolas SALLES, Olivier POLITANO
@@ -27,7 +27,7 @@
 
    Contact: Nicolas Salles <nsalles33@gmail.com>
             Olivier Politano <olivier.politano@u-bourgogne.fr>
-            Robert Tétot <robert.tetot@universite-paris-saclay.fr>
+            Robert Tetot <robert.tetot@universite-paris-saclay.fr>
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -47,6 +47,7 @@
 #include "comm.h"
 #include "error.h"
 #include "force.h"
+#include "info.h"
 #include "math_const.h"
 #include "math_extra.h"
 #include "math_special.h"
@@ -60,6 +61,7 @@
 #include <cstring>
 
 #include <algorithm>
+#include <exception>
 #include <fstream>
 #include <iomanip>
 
@@ -70,9 +72,6 @@ using namespace MathConst;
 using namespace MathExtra;
 using namespace MathSpecial;
 
-static constexpr int MAXLINE = 2048;
-static constexpr int MAXTOKENS = 2048;
-static constexpr int DELTA = 4;
 static constexpr int PGDELTA = 1;
 static constexpr int MAXNEIGH = 24;
 
@@ -308,7 +307,9 @@ void PairSMTBQ::init_style()
 
 double PairSMTBQ::init_one(int i, int j)
 {
-  if (setflag[i][j] == 0) error->all(FLERR,"All pair coeffs are not set");
+  if (setflag[i][j] == 0)
+    error->all(FLERR, Error::NOLASTLINE,
+               "All pair coeffs are not set. Status\n" + Info::get_pair_coeff_status(lmp));
   return cutmax;
 }
 
@@ -897,7 +898,7 @@ void PairSMTBQ::compute(int eflag, int vflag)
      3 -> Short int. Ox-Ox
      4 -> Short int. SMTB (repulsion)
      5 -> Covalent energy SMTB
-     6 -> Somme des Q(i)²
+     6 -> Sum over Q(i)**2
      ------------------------------------------------------------------------- */
 
   /* -------------- N-body forces Calcul --------------- */
@@ -2982,9 +2983,6 @@ void PairSMTBQ::groupQEqAllParallel_QEq()
 
   ngp = igp = 0; nelt[ngp] = 0;
 
-  // On prend un oxygène
-  //   printf ("[me %d] On prend un oxygene\n",me);
-
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii] ; itype = map[type[i]];
     if (itype != 0 || flag_QEq[i] == 0) continue;
@@ -3514,6 +3512,7 @@ void PairSMTBQ::add_pages(int howmany)
 }
 
 /* ---------------------------------------------------------------------- */
+// NOLINTBEGIN
 
 void PairSMTBQ::CheckEnergyVSForce()
 {
@@ -3575,7 +3574,6 @@ void PairSMTBQ::CheckEnergyVSForce()
           coord[j]=3.5;
           NameFile=(const char *)"energyandForceOxOxUnderOverCoord.txt";
         }
-
 
       ofstream fichierOxOx(NameFile, ios::out | ios::trunc) ;
 
@@ -4014,6 +4012,7 @@ void PairSMTBQ::css(double &s, double nn1, double nn2, double alpha, double beta
   memory->destroy(a);
   memory->destroy(b);
 }
+// NOLINTEND
 /* -------------------------------------------------------------------------------
    coeffs
    ------------------------------------------------------------------------------- */

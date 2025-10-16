@@ -50,8 +50,7 @@ FixNHSphere::FixNHSphere(LAMMPS *lmp, int narg, char **arg) :
     if (strcmp(arg[iarg],"disc") == 0) {
       inertia = 0.5;
       if (domain->dimension != 2)
-        error->all(FLERR,
-                   "Fix nvt/nph/npt sphere disc option requires 2d simulation");
+        error->all(FLERR, "Fix {} disc option requires 2d simulation", style);
     }
     iarg++;
   }
@@ -71,7 +70,7 @@ void FixNHSphere::init()
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit)
       if (radius[i] == 0.0)
-        error->one(FLERR,"Fix nvt/npt/nph/sphere require extended particles");
+        error->one(FLERR,"Fix {} requires extended particles", style);
 
   FixNH::init();
 }

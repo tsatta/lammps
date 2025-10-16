@@ -22,6 +22,10 @@
 #include <atomic>
 #include <Cuda/Kokkos_Cuda_Error.hpp>
 #include <cuda_runtime_api.h>
+#include "Kokkos_CudaSpace.hpp"
+
+#include <set>
+#include <map>
 
 //----------------------------------------------------------------------------
 //----------------------------------------------------------------------------
@@ -55,26 +59,9 @@ struct CudaTraits {
       unsigned long[ConstantMemoryUsage / sizeof(unsigned long)];
 
   static constexpr int ConstantMemoryUseThreshold = 0x000200 /* 512 bytes */;
-
-  KOKKOS_INLINE_FUNCTION static CudaSpace::size_type warp_count(
-      CudaSpace::size_type i) {
-    return (i + WarpIndexMask) >> WarpIndexShift;
-  }
-
-  KOKKOS_INLINE_FUNCTION static CudaSpace::size_type warp_align(
-      CudaSpace::size_type i) {
-    constexpr CudaSpace::size_type Mask = ~WarpIndexMask;
-    return (i + WarpIndexMask) & Mask;
-  }
 };
 
 //----------------------------------------------------------------------------
-
-CudaSpace::size_type cuda_internal_multiprocessor_count();
-CudaSpace::size_type cuda_internal_maximum_warp_count();
-std::array<CudaSpace::size_type, 3> cuda_internal_maximum_grid_count();
-
-CudaSpace::size_type cuda_internal_maximum_concurrent_block_count();
 
 CudaSpace::size_type* cuda_internal_scratch_flags(const Cuda&,
                                                   const std::size_t size);
@@ -101,21 +88,13 @@ class CudaInternal {
  public:
   using size_type = Cuda::size_type;
 
-  inline static int m_cudaDev = -1;
+  int m_cudaDev = -1;
 
   // Device Properties
-  inline static int m_cudaArch                      = -1;
-  inline static unsigned m_multiProcCount           = 0;
-  inline static unsigned m_maxWarpCount             = 0;
-  inline static std::array<size_type, 3> m_maxBlock = {0, 0, 0};
-  inline static int m_shmemPerSM                    = 0;
-  inline static int m_maxShmemPerBlock              = 0;
-  inline static int m_maxBlocksPerSM                = 0;
-  inline static int m_maxThreadsPerSM               = 0;
-  inline static int m_maxThreadsPerBlock            = 0;
+  static int m_cudaArch;
   static int concurrency();
 
-  inline static cudaDeviceProp m_deviceProp;
+  static cudaDeviceProp m_deviceProp;
 
   // Scratch Spaces for Reductions
   mutable std::size_t m_scratchSpaceCount;
@@ -129,7 +108,6 @@ class CudaInternal {
   mutable size_type* m_scratchFunctor;
   cudaStream_t m_stream;
   uint32_t m_instance_id;
-  bool m_manage_stream;
 
   // Team Scratch Level 1 Space
   int m_n_team_scratch = 10;
@@ -142,11 +120,10 @@ class CudaInternal {
   bool was_initialized = false;
   bool was_finalized   = false;
 
-  // FIXME_CUDA: these want to be per-device, not per-stream...  use of 'static'
-  //  here will break once there are multiple devices though
-  inline static unsigned long* constantMemHostStaging = nullptr;
-  inline static cudaEvent_t constantMemReusable       = nullptr;
-  inline static std::mutex constantMemMutex;
+  static std::set<int> cuda_devices;
+  static std::map<int, unsigned long*> constantMemHostStagingPerDevice;
+  static std::map<int, cudaEvent_t> constantMemReusablePerDevice;
+  static std::map<int, std::mutex> constantMemMutexPerDevice;
 
   static CudaInternal& singleton();
 
@@ -156,7 +133,7 @@ class CudaInternal {
     return nullptr != m_scratchSpace && nullptr != m_scratchFlags;
   }
 
-  void initialize(cudaStream_t stream, bool manage_stream);
+  void initialize(cudaStream_t stream);
   void finalize();
 
   void print_configuration(std::ostream&) const;
@@ -191,336 +168,196 @@ class CudaInternal {
     }
   }
 
-  // Using cudaAPI function/objects will be w.r.t. device 0 unless
+  // Using CUDA API function/objects will be w.r.t. device 0 unless
   // cudaSetDevice(device_id) is called with the correct device_id.
   // The correct device_id is stored in the variable
-  // CudaInternal::m_cudaDev set in Cuda::impl_initialize(). It is not
-  // sufficient to call cudaSetDevice(m_cudaDev) during cuda initialization
-  // only, however, since if a user creates a new thread, that thread will be
-  // given the default cuda env with device_id=0, causing errors when
-  // device_id!=0 is requested by the user. To ensure against this, almost all
-  // cudaAPI calls, as well as using cudaStream_t variables, must be proceeded
-  // by cudaSetDevice(device_id).
+  // CudaInternal::m_cudaDev set in Cuda::impl_initialize(). In the case
+  // where multiple CUDA instances are used, or threads are launched
+  // using non-default CUDA execution space after initialization, all CUDA
+  // API calls must follow a call to cudaSetDevice(device_id) when an
+  // execution space or CudaInternal object is provided to ensure all
+  // computation is done on the correct device.
 
-  // This function sets device in cudaAPI to device requested at runtime (set in
-  // m_cudaDev).
+  // FIXME: Not all CUDA API calls require us to set device. Potential
+  // performance gain by selectively setting device.
+
+  // Set the device to the one stored by this instance for CUDA API calls.
   void set_cuda_device() const {
     verify_is_initialized("set_cuda_device");
     KOKKOS_IMPL_CUDA_SAFE_CALL(cudaSetDevice(m_cudaDev));
   }
 
-  // Return the class stream, optionally setting the device id.
-  template <bool setCudaDevice = true>
-  cudaStream_t get_stream() const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return m_stream;
-  }
-
-  // The following are wrappers for cudaAPI functions (C and C++ routines) which
-  // set the correct device id directly before the cudaAPI call (unless
-  // explicitly disabled by providing setCudaDevice=false template).
-  // setCudaDevice=true should be used for all API calls which take a stream
-  // unless it is guarenteed to be from a cuda instance with the correct device
-  // set already (e.g., back-to-back cudaAPI calls in a single function). For
-  // cudaAPI functions that take a stream, an optional input stream is
-  // available. If no stream is given, the stream for the CudaInternal instance
-  // is used. All cudaAPI calls should be wrapped in these interface functions
-  // to ensure safety when using threads.
-
-  // Helper function for selecting the correct input stream
-  cudaStream_t get_input_stream(cudaStream_t s) const {
-    return s == nullptr ? get_stream<false>() : s;
-  }
+  // CUDA API wrappers
 
   // C API routines
-  template <bool setCudaDevice = true>
   cudaError_t cuda_device_get_limit_wrapper(size_t* pValue,
                                             cudaLimit limit) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaDeviceGetLimit(pValue, limit);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_device_set_limit_wrapper(cudaLimit limit,
                                             size_t value) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaDeviceSetLimit(limit, value);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_device_synchronize_wrapper() const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaDeviceSynchronize();
+  cudaError_t cuda_event_create_with_flags_wrapper(
+      cudaEvent_t* event, const unsigned int flags) const {
+    set_cuda_device();
+    return cudaEventCreateWithFlags(event, flags);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_event_create_wrapper(cudaEvent_t* event) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaEventCreate(event);
+  cudaError_t cuda_event_record_wrapper(cudaEvent_t event) const {
+    set_cuda_device();
+    return cudaEventRecord(event, m_stream);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_event_destroy_wrapper(cudaEvent_t event) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaEventDestroy(event);
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_event_record_wrapper(cudaEvent_t event,
-                                        cudaStream_t stream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaEventRecord(event, get_input_stream(stream));
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_event_synchronize_wrapper(cudaEvent_t event) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaEventSynchronize(event);
-  }
-
-  template <bool setCudaDevice = true>
   cudaError_t cuda_free_wrapper(void* devPtr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaFree(devPtr);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_free_host_wrapper(void* ptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaFreeHost(ptr);
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_get_device_count_wrapper(int* count) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaGetDeviceCount(count);
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_get_device_properties_wrapper(cudaDeviceProp* prop,
-                                                 int device) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaGetDeviceProperties(prop, device);
-  }
-
-  template <bool setCudaDevice = true>
-  const char* cuda_get_error_name_wrapper(cudaError_t error) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaGetErrorName(error);
-  }
-
-  template <bool setCudaDevice = true>
-  const char* cuda_get_error_string_wrapper(cudaError_t error) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaGetErrorString(error);
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_get_last_error_wrapper() const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaGetLastError();
-  }
-
-  template <bool setCudaDevice = true>
   cudaError_t cuda_graph_add_dependencies_wrapper(
       cudaGraph_t graph, const cudaGraphNode_t* from, const cudaGraphNode_t* to,
       size_t numDependencies) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
+#if CUDART_VERSION >= 13000
+    return cudaGraphAddDependencies(graph, from, to, NULL, numDependencies);
+#else
     return cudaGraphAddDependencies(graph, from, to, numDependencies);
+#endif
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_graph_add_empty_node_wrapper(
       cudaGraphNode_t* pGraphNode, cudaGraph_t graph,
       const cudaGraphNode_t* pDependencies, size_t numDependencies) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaGraphAddEmptyNode(pGraphNode, graph, pDependencies,
                                  numDependencies);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_graph_add_kernel_node_wrapper(
       cudaGraphNode_t* pGraphNode, cudaGraph_t graph,
       const cudaGraphNode_t* pDependencies, size_t numDependencies,
       const cudaKernelNodeParams* pNodeParams) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaGraphAddKernelNode(pGraphNode, graph, pDependencies,
                                   numDependencies, pNodeParams);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_graph_create_wrapper(cudaGraph_t* pGraph,
                                         unsigned int flags) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaGraphCreate(pGraph, flags);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_graph_destroy_wrapper(cudaGraph_t graph) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaGraphDestroy(graph);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_graph_exec_destroy_wrapper(cudaGraphExec_t graphExec) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaGraphExecDestroy(graphExec);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_graph_launch_wrapper(cudaGraphExec_t graphExec,
-                                        cudaStream_t stream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaGraphLaunch(graphExec, get_input_stream(stream));
+  cudaError_t cuda_graph_launch_wrapper(cudaGraphExec_t graphExec) const {
+    set_cuda_device();
+    return cudaGraphLaunch(graphExec, m_stream);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_host_alloc_wrapper(void** pHost, size_t size,
-                                      unsigned int flags) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaHostAlloc(pHost, size, flags);
-  }
-
-  template <bool setCudaDevice = true>
   cudaError_t cuda_malloc_wrapper(void** devPtr, size_t size) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaMalloc(devPtr, size);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_malloc_host_wrapper(void** ptr, size_t size) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaMallocHost(ptr, size);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_malloc_managed_wrapper(
-      void** devPtr, size_t size,
-      unsigned int flags = cudaMemAttachGlobal) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaMallocManaged(devPtr, size, flags);
+  cudaError_t cuda_mem_prefetch_async_wrapper(const void* devPtr, size_t count,
+                                              int dstDevice) const {
+    set_cuda_device();
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc = {cudaMemLocationTypeDevice, dstDevice};
+    return cudaMemPrefetchAsync(devPtr, count, loc, 0, m_stream);
+#else
+    return cudaMemPrefetchAsync(devPtr, count, dstDevice, m_stream);
+#endif
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_mem_advise_wrapper(const void* devPtr, size_t count,
-                                      cudaMemoryAdvise advice,
-                                      int device) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaMemAdvise(devPtr, count, advice, device);
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_mem_prefetch_async_wrapper(
-      const void* devPtr, size_t count, int dstDevice,
-      cudaStream_t stream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaMemPrefetchAsync(devPtr, count, dstDevice,
-                                get_input_stream(stream));
-  }
-
-  template <bool setCudaDevice = true>
   cudaError_t cuda_memcpy_wrapper(void* dst, const void* src, size_t count,
                                   cudaMemcpyKind kind) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaMemcpy(dst, src, count, kind);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_memcpy_async_wrapper(void* dst, const void* src,
-                                        size_t count, cudaMemcpyKind kind,
-                                        cudaStream_t stream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaMemcpyAsync(dst, src, count, kind, get_input_stream(stream));
+                                        size_t count,
+                                        cudaMemcpyKind kind) const {
+    set_cuda_device();
+    return cudaMemcpyAsync(dst, src, count, kind, m_stream);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_memcpy_to_symbol_async_wrapper(
-      const void* symbol, const void* src, size_t count, size_t offset,
-      cudaMemcpyKind kind, cudaStream_t stream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaMemcpyToSymbolAsync(symbol, src, count, offset, kind,
-                                   get_input_stream(stream));
+  cudaError_t cuda_memcpy_to_symbol_async_wrapper(const void* symbol,
+                                                  const void* src, size_t count,
+                                                  size_t offset,
+                                                  cudaMemcpyKind kind) const {
+    set_cuda_device();
+    return cudaMemcpyToSymbolAsync(symbol, src, count, offset, kind, m_stream);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_memset_wrapper(void* devPtr, int value, size_t count) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaMemset(devPtr, value, count);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_memset_async_wrapper(void* devPtr, int value, size_t count,
-                                        cudaStream_t stream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaMemsetAsync(devPtr, value, count, get_input_stream(stream));
+  cudaError_t cuda_memset_async_wrapper(void* devPtr, int value,
+                                        size_t count) const {
+    set_cuda_device();
+    return cudaMemsetAsync(devPtr, value, count, m_stream);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_pointer_get_attributes_wrapper(
       cudaPointerAttributes* attributes, const void* ptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaPointerGetAttributes(attributes, ptr);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_stream_create_wrapper(cudaStream_t* pStream) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaStreamCreate(pStream);
   }
 
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_stream_destroy_wrapper(cudaStream_t stream) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaStreamDestroy(stream);
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_stream_synchronize_wrapper(cudaStream_t stream) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaStreamSynchronize(stream);
-  }
-
-  // The following are only available for cuda 11.2 and greater
-#if (defined(KOKKOS_ENABLE_IMPL_CUDA_MALLOC_ASYNC) && CUDART_VERSION >= 11020)
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_malloc_async_wrapper(void** devPtr, size_t size,
-                                        cudaStream_t hStream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaMallocAsync(devPtr, size, get_input_stream(hStream));
-  }
-
-  template <bool setCudaDevice = true>
-  cudaError_t cuda_free_async_wrapper(void* devPtr,
-                                      cudaStream_t hStream = nullptr) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaFreeAsync(devPtr, get_input_stream(hStream));
-  }
-#endif
-
   // C++ API routines
-  template <typename T, bool setCudaDevice = true>
+  template <typename T>
   cudaError_t cuda_func_get_attributes_wrapper(cudaFuncAttributes* attr,
                                                T* entry) const {
-    if constexpr (setCudaDevice) set_cuda_device();
+    set_cuda_device();
     return cudaFuncGetAttributes(attr, entry);
   }
 
-  template <typename T, bool setCudaDevice = true>
-  cudaError_t cuda_func_set_attributes_wrapper(T* entry, cudaFuncAttribute attr,
-                                               int value) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaFuncSetAttributes(entry, attr, value);
+  template <typename T>
+  cudaError_t cuda_func_set_attribute_wrapper(T* entry, cudaFuncAttribute attr,
+                                              int value) const {
+    set_cuda_device();
+    return cudaFuncSetAttribute(entry, attr, value);
   }
 
-  template <bool setCudaDevice = true>
   cudaError_t cuda_graph_instantiate_wrapper(cudaGraphExec_t* pGraphExec,
-                                             cudaGraph_t graph,
-                                             cudaGraphNode_t* pErrorNode,
-                                             char* pLogBuffer,
-                                             size_t bufferSize) const {
-    if constexpr (setCudaDevice) set_cuda_device();
-    return cudaGraphInstantiate(pGraphExec, graph, pErrorNode, pLogBuffer,
-                                bufferSize);
+                                             cudaGraph_t graph) const {
+    set_cuda_device();
+#if CUDA_VERSION < 12000
+    constexpr size_t error_log_size = 256;
+    cudaGraphNode_t error_node      = nullptr;
+    char error_log[error_log_size];
+    return cudaGraphInstantiate(pGraphExec, graph, &error_node, error_log,
+                                error_log_size);
+#else
+    return cudaGraphInstantiate(pGraphExec, graph);
+#endif
   }
 
   // Resizing of reduction related scratch spaces
@@ -535,39 +372,27 @@ class CudaInternal {
                                   bool force_shrink = false);
   void release_team_scratch_space(int scratch_pool_id);
 };
-
-void create_Cuda_instances(std::vector<Cuda>& instances);
 }  // Namespace Impl
 
-namespace Experimental {
-// Partitioning an Execution Space: expects space and integer arguments for
-// relative weight
-//   Customization point for backends
-//   Default behavior is to return the passed in instance
-
-template <class... Args>
-std::vector<Cuda> partition_space(const Cuda&, Args...) {
-  static_assert(
-      (... && std::is_arithmetic_v<Args>),
-      "Kokkos Error: partitioning arguments must be integers or floats");
-  std::vector<Cuda> instances(sizeof...(Args));
-  Kokkos::Impl::create_Cuda_instances(instances);
-  return instances;
-}
-
+namespace Experimental::Impl {
+// For each space in partition, create new cudaStream_t on the same device as
+// base_instance, ignoring weights
 template <class T>
-std::vector<Cuda> partition_space(const Cuda&, std::vector<T> const& weights) {
-  static_assert(
-      std::is_arithmetic<T>::value,
-      "Kokkos Error: partitioning arguments must be integers or floats");
+std::vector<Cuda> impl_partition_space(const Cuda& base_instance,
+                                       const std::vector<T>& weights) {
+  std::vector<Cuda> instances;
+  instances.reserve(weights.size());
+  std::generate_n(
+      std::back_inserter(instances), weights.size(), [&base_instance]() {
+        cudaStream_t stream;
+        KOKKOS_IMPL_CUDA_SAFE_CALL(base_instance.impl_internal_space_instance()
+                                       ->cuda_stream_create_wrapper(&stream));
+        return Cuda(stream, Kokkos::Impl::ManageStream::yes);
+      });
 
-  // We only care about the number of instances to create and ignore weights
-  // otherwise.
-  std::vector<Cuda> instances(weights.size());
-  Kokkos::Impl::create_Cuda_instances(instances);
   return instances;
 }
-}  // namespace Experimental
+}  // namespace Experimental::Impl
 
 }  // Namespace Kokkos
 #endif

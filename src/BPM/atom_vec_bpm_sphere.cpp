@@ -11,16 +11,17 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
+/* ----------------------------------------------------------------------
+   Contributing author: Joel Clemmer (SNL)
+------------------------------------------------------------------------- */
+
 #include "atom_vec_bpm_sphere.h"
 
 #include "atom.h"
-#include "comm.h"
 #include "error.h"
 #include "fix.h"
 #include "math_const.h"
 #include "modify.h"
-
-#include <cstring>
 
 using namespace LAMMPS_NS;
 using MathConst::MY_PI;
@@ -73,7 +74,7 @@ void AtomVecBPMSphere::process_args(int narg, char **arg)
 
   radvary = 0;
   if (narg == 1) {
-    radvary = utils::numeric(FLERR, arg[0], true, lmp);
+    radvary = utils::inumeric(FLERR, arg[0], true, lmp);
     if (radvary < 0 || radvary > 1) error->all(FLERR, "Illegal atom_style bpm/sphere command");
   }
 

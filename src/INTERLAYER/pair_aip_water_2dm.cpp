@@ -24,14 +24,7 @@
 #include "error.h"
 #include "force.h"
 
-#include <cmath>
-#include <cstring>
-
 using namespace LAMMPS_NS;
-
-static constexpr int MAXLINE = 1024;
-static constexpr int DELTA = 4;
-static constexpr int PGDELTA = 1;
 
 static const char cite_aip_water[] =
     "aip/water/2dm potential doi/10.1021/acs.jpcc.2c08464\n"
@@ -68,5 +61,5 @@ void PairAIPWATER2DM::settings(int narg, char **arg)
     error->all(FLERR, "Pair style aip/water/2dm must be used as sub-style with hybrid/overlay");
 
   cut_global = utils::numeric(FLERR, arg[0], false, lmp);
-  if (narg == 2) tap_flag = utils::numeric(FLERR, arg[1], false, lmp);
+  if (narg == 2) tap_flag = utils::inumeric(FLERR, arg[1], false, lmp);
 }

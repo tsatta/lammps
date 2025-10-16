@@ -16,7 +16,7 @@
 #include "atom_masks.h"
 #include "atom_vec.h"
 #include "atom_vec_kokkos.h"
-#include "comm_kokkos.h"
+#include "comm.h"
 #include "domain.h"
 #include "error.h"
 #include "kokkos.h"
@@ -31,9 +31,7 @@ using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-AtomKokkos::AtomKokkos(LAMMPS *lmp) : Atom(lmp),
-mapBinner(1, 0.0, 1.0), // no default constructor, these values are not used
-mapSorter(d_tag_sorted, 0, 1, mapBinner, true)
+AtomKokkos::AtomKokkos(LAMMPS *lmp) : Atom(lmp)
 {
   avecKK = nullptr;
 
@@ -127,7 +125,7 @@ void AtomKokkos::init()
 {
   Atom::init();
 
-  sort_classic = lmp->kokkos->sort_classic;
+  sort_legacy = lmp->kokkos->sort_legacy;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -156,7 +154,13 @@ void AtomKokkos::update_property_atom()
 
 void AtomKokkos::sync(const ExecutionSpace space, unsigned int mask)
 {
-  if (space == Device && lmp->kokkos->auto_sync) {
+  if ((space == Device || space == HostKK) && lmp->kokkos->auto_sync) {
+
+    // sync HostKK -> Host if needed
+
+    avecKK->sync(Host, mask);
+    for (int n = 0; n < nprop_atom; n++) fix_prop_atom[n]->sync(Host, mask);
+
     avecKK->modified(Host, mask);
     for (int n = 0; n < nprop_atom; n++) fix_prop_atom[n]->modified(Host, mask);
   }
@@ -172,7 +176,7 @@ void AtomKokkos::modified(const ExecutionSpace space, unsigned int mask)
   avecKK->modified(space, mask);
   for (int n = 0; n < nprop_atom; n++) fix_prop_atom[n]->modified(space, mask);
 
-  if (space == Device && lmp->kokkos->auto_sync) {
+  if ((space == Device || space == HostKK) && lmp->kokkos->auto_sync) {
     avecKK->sync(Host, mask);
     for (int n = 0; n < nprop_atom; n++) fix_prop_atom[n]->sync(Host, mask);
   }
@@ -180,21 +184,20 @@ void AtomKokkos::modified(const ExecutionSpace space, unsigned int mask)
 
 /* ---------------------------------------------------------------------- */
 
-void AtomKokkos::sync_overlapping_device(const ExecutionSpace space, unsigned int mask)
+void AtomKokkos::sync_pinned(const ExecutionSpace space, unsigned int mask, int async_flag)
 {
-  avecKK->sync_overlapping_device(space, mask);
-  for (int n = 0; n < nprop_atom; n++) fix_prop_atom[n]->sync_overlapping_device(space, mask);
+  avecKK->sync_pinned(space, mask, async_flag);
+  for (int n = 0; n < nprop_atom; n++) fix_prop_atom[n]->sync_pinned(space, mask, async_flag);
 }
 /* ---------------------------------------------------------------------- */
 
 void AtomKokkos::allocate_type_arrays()
 {
   if (avec->mass_type == AtomVec::PER_TYPE) {
-    k_mass = DAT::tdual_float_1d("Mass", ntypes + 1);
-    mass = k_mass.h_view.data();
+    memoryKK->create_kokkos(k_mass,mass,ntypes + 1,"atom::mass");
     mass_setflag = new int[ntypes + 1];
     for (int itype = 1; itype <= ntypes; itype++) mass_setflag[itype] = 0;
-    k_mass.modify<LMPHostType>();
+    k_mass.modify_host();
   }
 }
 
@@ -204,27 +207,32 @@ void AtomKokkos::sort()
 {
   // check if all fixes with atom-based arrays support sort on device
 
-  if (!sort_classic) {
+  if (!sort_legacy) {
     int flag = 1;
     for (int iextra = 0; iextra < atom->nextra_grow; iextra++) {
       auto fix_iextra = modify->fix[atom->extra_grow[iextra]];
       if (!fix_iextra->sort_device) {
         flag = 0;
+        if (comm->me == 0)
+          error->warning(FLERR,"Fix {} not compatible with Kokkos sorting on device", fix_iextra->style);
         break;
       }
     }
     if (!flag) {
       if (comm->me == 0) {
         error->warning(FLERR,"Fix with atom-based arrays not compatible with Kokkos sorting on device, "
-                           "switching to classic host sorting");
+                           "switching to legacy host sorting");
       }
-      sort_classic = true;
+      sort_legacy = true;
     }
   }
 
-  if (sort_classic) {
+  if (sort_legacy) {
     sync(Host, ALL_MASK);
+    int prev_auto_sync = lmp->kokkos->auto_sync;
+    lmp->kokkos->auto_sync = 1;
     Atom::sort();
+    lmp->kokkos->auto_sync = prev_auto_sync;
     modified(Host, ALL_MASK);
   } else sort_device();
 }
@@ -246,7 +254,7 @@ void AtomKokkos::sort_device()
 
   if (domain->triclinic) domain->lamda2x(nlocal);
 
-  auto d_x = k_x.d_view;
+  auto d_x = k_x.view_device();
   sync(Device, X_MASK);
 
   // sort
@@ -256,7 +264,7 @@ void AtomKokkos::sort_device()
   max_bins[1] = nbiny;
   max_bins[2] = nbinz;
 
-  using KeyViewType = DAT::t_x_array;
+  using KeyViewType = DAT::t_kkfloat_1d_3_lr;
   using BinOp = BinOp3DLAMMPS<KeyViewType>;
   BinOp binner(max_bins, bboxlo, bboxhi);
   Kokkos::BinSort<KeyViewType, BinOp> Sorter(d_x, 0, nlocal, binner, false);
@@ -279,28 +287,12 @@ void AtomKokkos::sort_device()
 }
 
 /* ----------------------------------------------------------------------
-   reallocate memory to the pointer selected by the mask
-------------------------------------------------------------------------- */
-
-void AtomKokkos::grow(unsigned int mask)
-{
-  if (mask & SPECIAL_MASK) {
-    memoryKK->destroy_kokkos(k_special, special);
-    sync(Device, mask);
-    modified(Device, mask);
-    memoryKK->grow_kokkos(k_special, special, nmax, maxspecial, "atom:special");
-    avec->grow_pointers();
-    sync(Host, mask);
-  }
-}
-
-/* ----------------------------------------------------------------------
    add a custom variable with name of type flag = 0/1 for int/double
    assumes name does not already exist
    return index in ivector or dvector of its location
 ------------------------------------------------------------------------- */
 
-int AtomKokkos::add_custom(const char *name, int flag, int cols)
+int AtomKokkos::add_custom(const char *name, int flag, int cols, int ghost)
 {
   int index = -1;
 
@@ -309,6 +301,8 @@ int AtomKokkos::add_custom(const char *name, int flag, int cols)
     nivector++;
     ivname = (char **) memory->srealloc(ivname, nivector * sizeof(char *), "atom:ivname");
     ivname[index] = utils::strdup(name);
+    ivghost = (int *) memory->srealloc(ivghost,nivector * sizeof(int),"atom:ivghost");
+    ivghost[index] = ghost;
     ivector = (int **) memory->srealloc(ivector, nivector * sizeof(int *), "atom:ivector");
     memory->create(ivector[index], nmax, "atom:ivector");
 
@@ -317,6 +311,8 @@ int AtomKokkos::add_custom(const char *name, int flag, int cols)
     ndvector++;
     dvname = (char **) memory->srealloc(dvname, ndvector * sizeof(char *), "atom:dvname");
     dvname[index] = utils::strdup(name);
+    dvghost = (int *) memory->srealloc(dvghost, ndvector * sizeof(int), "atom:dvghost");
+    dvghost[index] = ghost;
     dvector = (double **) memory->srealloc(dvector, ndvector * sizeof(double *), "atom:dvector");
     this->sync(Device, DVECTOR_MASK);
     memoryKK->grow_kokkos(k_dvector, dvector, ndvector, nmax, "atom:dvector");
@@ -327,6 +323,8 @@ int AtomKokkos::add_custom(const char *name, int flag, int cols)
     niarray++;
     ianame = (char **) memory->srealloc(ianame, niarray * sizeof(char *), "atom:ianame");
     ianame[index] = utils::strdup(name);
+    iaghost = (int *) memory->srealloc(iaghost, niarray * sizeof(int), "atom:iaghost");
+    iaghost[index] = ghost;
     iarray = (int ***) memory->srealloc(iarray, niarray * sizeof(int **), "atom:iarray");
     memory->create(iarray[index], nmax, cols, "atom:iarray");
 
@@ -338,12 +336,17 @@ int AtomKokkos::add_custom(const char *name, int flag, int cols)
     ndarray++;
     daname = (char **) memory->srealloc(daname, ndarray * sizeof(char *), "atom:daname");
     daname[index] = utils::strdup(name);
+    daghost = (int *) memory->srealloc(daghost, ndarray * sizeof(int), "atom:daghost");
+    daghost[index] = ghost;
     darray = (double ***) memory->srealloc(darray, ndarray * sizeof(double **), "atom:darray");
     memory->create(darray[index], nmax, cols, "atom:darray");
 
     dcols = (int *) memory->srealloc(dcols, ndarray * sizeof(int), "atom:dcols");
     dcols[index] = cols;
   }
+
+  if (index < 0)
+    error->all(FLERR,"Invalid call to AtomKokkos::add_custom()");
 
   return index;
 }

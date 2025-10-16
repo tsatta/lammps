@@ -33,7 +33,7 @@
 #include <cstring>
 
 using namespace LAMMPS_NS;
-using namespace MathConst;
+using MathConst::MY_PI;
 
 /* ---------------------------------------------------------------------- */
 
@@ -108,9 +108,12 @@ void ComputeAveSphereAtom::init()
   else
     volume = MY_PI * cutsq;
 
+  if (neighbor->style == Neighbor::MULTI)
+    error->all(FLERR, "Compute ave/sphere/atom requires neighbor style 'bin' or 'nsq'");
+
   // need an occasional full neighbor list
 
-  auto req = neighbor->add_request(this, NeighConst::REQ_FULL | NeighConst::REQ_OCCASIONAL);
+  auto *req = neighbor->add_request(this, NeighConst::REQ_FULL | NeighConst::REQ_OCCASIONAL);
   if (cutflag) req->set_cutoff(cutoff);
 }
 

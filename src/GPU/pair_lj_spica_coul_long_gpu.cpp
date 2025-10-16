@@ -20,6 +20,7 @@
 #include "atom.h"
 #include "domain.h"
 #include "error.h"
+#include "ewald_const.h"
 #include "force.h"
 #include "gpu_extra.h"
 #include "kspace.h"
@@ -29,15 +30,8 @@
 
 #include <cmath>
 
-#define EWALD_F 1.12837917
-#define EWALD_P 0.3275911
-#define A1 0.254829592
-#define A2 -0.284496736
-#define A3 1.421413741
-#define A4 -1.453152027
-#define A5 1.061405429
-
 using namespace LAMMPS_NS;
+using namespace EwaldConst;
 
 // External functions from cuda library for atom decomposition
 
@@ -267,7 +261,7 @@ void PairLJSPICACoulLongGPU::cpu_compute(int start, int inum, int *ilist, int *n
             rsq_lookup.f = rsq;
             int itable = rsq_lookup.i & ncoulmask;
             itable >>= ncoulshiftbits;
-            const double fraction = (rsq_lookup.f - rtable[itable]) * drtable[itable];
+            const double fraction = ((double) rsq_lookup.f - rtable[itable]) * drtable[itable];
             const double table = ftable[itable] + fraction * dftable[itable];
             forcecoul = qtmp * q[j] * table;
             if (EFLAG) {

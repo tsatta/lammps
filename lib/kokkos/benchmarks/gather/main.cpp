@@ -16,10 +16,10 @@
 
 #include <Kokkos_Core.hpp>
 #include <Kokkos_Timer.hpp>
-#include <gather.hpp>
+#include "gather.hpp"
 #include <cstdlib>
 
-int main(int argc, char* argv[]) {
+int main(int argc, char* argv[]) {  // NOLINT(bugprone-exception-escape)
   Kokkos::initialize(argc, argv);
 
   if (argc < 8) {

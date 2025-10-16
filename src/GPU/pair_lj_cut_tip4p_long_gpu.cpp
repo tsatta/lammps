@@ -23,6 +23,7 @@
 #include "comm.h"
 #include "domain.h"
 #include "error.h"
+#include "ewald_const.h"
 #include "force.h"
 #include "gpu_extra.h"
 #include "kspace.h"
@@ -33,15 +34,8 @@
 
 #include <cmath>
 
-#define EWALD_F 1.12837917
-#define EWALD_P 0.3275911
-#define A1 0.254829592
-#define A2 -0.284496736
-#define A3 1.421413741
-#define A4 -1.453152027
-#define A5 1.061405429
-
 using namespace LAMMPS_NS;
+using namespace EwaldConst;
 
 // External functions from cuda library for atom decomposition
 
@@ -204,7 +198,7 @@ void PairLJCutTIP4PLongGPU::init_style()
       atom->get_map_size(), atom->get_max_same());
   GPU_EXTRA::check_flag(success, error, world);
   if (gpu_mode == GPU_FORCE) {
-    auto req = neighbor->add_request(this, NeighConst::REQ_FULL);
+    auto *req = neighbor->add_request(this, NeighConst::REQ_FULL);
     req->set_cutoff(cut_coulplus + neighbor->skin);
   }
 }

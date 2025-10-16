@@ -26,7 +26,6 @@
 #include "neigh_list.h"
 #include "neighbor.h"
 #include "suffix.h"
-#include "update.h"
 
 #include <cmath>
 
@@ -113,7 +112,7 @@ void PairSPHHeatConductionGPU::compute(int eflag, int vflag)
         neighbor->ago, inum, nall, atom->x, atom->type,
         sublo, subhi, atom->tag, atom->nspecial, atom->special, eflag, vflag,
         eflag_atom, vflag_atom, host_start, &ilist, &numneigh,
-        cpu_time, success, atom->v);
+        cpu_time, success, atom->vest);
   } else {
     inum = list->inum;
     ilist = list->ilist;
@@ -122,7 +121,7 @@ void PairSPHHeatConductionGPU::compute(int eflag, int vflag)
     sph_heatconduction_gpu_compute(neighbor->ago, inum, nall, atom->x, atom->type,
                        ilist, numneigh, firstneigh, eflag, vflag,
                        eflag_atom, vflag_atom, host_start, cpu_time, success,
-                       atom->tag, atom->v);
+                       atom->tag, atom->vest);
   }
   if (!success) error->one(FLERR, "Insufficient memory on accelerator");
 
@@ -133,13 +132,13 @@ void PairSPHHeatConductionGPU::compute(int eflag, int vflag)
 
   int nlocal = atom->nlocal;
   if (acc_float) {
-    auto dE_ptr = (float *)dE_pinned;
+    auto *dE_ptr = (float *)dE_pinned;
     for (int i = 0; i < nlocal; i++) {
       desph[i] = dE_ptr[i];
     }
 
   } else {
-    auto dE_ptr = (double *)dE_pinned;
+    auto *dE_ptr = (double *)dE_pinned;
     for (int i = 0; i < nlocal; i++) {
       desph[i] = dE_ptr[i];
     }

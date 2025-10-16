@@ -14,36 +14,52 @@
 //
 //@HEADER
 
+#include <Kokkos_Macros.hpp>
+
+// Suppress "'long double' is treated as 'double' in device code"
+// The suppression needs to happen before Kokkos_NumericTraits.hpp is included
+// to be effective
+#ifdef KOKKOS_COMPILER_NVCC
+#ifdef __NVCC_DIAG_PRAGMA_SUPPORT__
+#pragma nv_diagnostic push
+#pragma nv_diag_suppress 20208
+#else
+#ifdef __CUDA_ARCH__
+#pragma diagnostic push
+#pragma diag_suppress 3245
+#endif
+#endif
+#endif
+
 #include <gtest/gtest.h>
 
 #include <Kokkos_Core.hpp>
 #include <type_traits>
 #include <limits>
-#include "Kokkos_NumericTraits.hpp"
 
 struct extrema {
 #define DEFINE_EXTREMA(T, m, M)                 \
   KOKKOS_FUNCTION static T min(T) { return m; } \
   KOKKOS_FUNCTION static T max(T) { return M; }
 
-  DEFINE_EXTREMA(char, CHAR_MIN, CHAR_MAX);
-  DEFINE_EXTREMA(signed char, SCHAR_MIN, SCHAR_MAX);
-  DEFINE_EXTREMA(unsigned char, 0, UCHAR_MAX);
-  DEFINE_EXTREMA(short, SHRT_MIN, SHRT_MAX);
-  DEFINE_EXTREMA(unsigned short, 0, USHRT_MAX);
-  DEFINE_EXTREMA(int, INT_MIN, INT_MAX);
-  DEFINE_EXTREMA(unsigned, 0U, UINT_MAX);
-  DEFINE_EXTREMA(long, LONG_MIN, LONG_MAX);
-  DEFINE_EXTREMA(unsigned long, 0UL, ULONG_MAX);
-  DEFINE_EXTREMA(long long, LLONG_MIN, LLONG_MAX);
-  DEFINE_EXTREMA(unsigned long long, 0ULL, ULLONG_MAX);
+  DEFINE_EXTREMA(char, CHAR_MIN, CHAR_MAX)
+  DEFINE_EXTREMA(signed char, SCHAR_MIN, SCHAR_MAX)
+  DEFINE_EXTREMA(unsigned char, 0, UCHAR_MAX)
+  DEFINE_EXTREMA(short, SHRT_MIN, SHRT_MAX)
+  DEFINE_EXTREMA(unsigned short, 0, USHRT_MAX)
+  DEFINE_EXTREMA(int, INT_MIN, INT_MAX)
+  DEFINE_EXTREMA(unsigned, 0U, UINT_MAX)
+  DEFINE_EXTREMA(long, LONG_MIN, LONG_MAX)
+  DEFINE_EXTREMA(unsigned long, 0UL, ULONG_MAX)
+  DEFINE_EXTREMA(long long, LLONG_MIN, LLONG_MAX)
+  DEFINE_EXTREMA(unsigned long long, 0ULL, ULLONG_MAX)
 
-  DEFINE_EXTREMA(float, -FLT_MAX, FLT_MAX);
-  DEFINE_EXTREMA(double, -DBL_MAX, DBL_MAX);
+  DEFINE_EXTREMA(float, -FLT_MAX, FLT_MAX)
+  DEFINE_EXTREMA(double, -DBL_MAX, DBL_MAX)
 
 #if !defined(KOKKOS_ENABLE_CUDA) || \
     !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double
-  DEFINE_EXTREMA(long double, -LDBL_MAX, LDBL_MAX);
+  DEFINE_EXTREMA(long double, -LDBL_MAX, LDBL_MAX)
 #else
   static long double min(long double) { return -LDBL_MAX; }
   static long double max(long double) { return LDBL_MAX; }
@@ -110,8 +126,8 @@ struct TestNumericTraits {
 
   KOKKOS_FUNCTION void operator()(Epsilon, int, int& e) const {
     using Kokkos::Experimental::epsilon;
-    auto const eps = epsilon<T>::value;
-    auto const one = T(1);
+    T const eps = epsilon<T>::value;
+    T const one = 1;
     // Avoid higher precision intermediate representation
     compare() = one + eps;
     e += (int)!(compare() != one);
@@ -145,33 +161,25 @@ struct TestNumericTraits {
   KOKKOS_FUNCTION void operator()(MaxExponent10, int, int&) const { use_on_device(); }
   // clang-format on
   KOKKOS_FUNCTION void operator()(QuietNaN, int, int& e) const {
-#ifndef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC 23.7 nan
     using Kokkos::Experimental::quiet_NaN;
     constexpr auto nan = quiet_NaN<T>::value;
     auto const zero    = T(0);
     e += (int)!(nan != nan);
     e += (int)!(nan != zero);
-#else
-    (void)e;
-#endif
     use_on_device();
   }
   KOKKOS_FUNCTION void operator()(SignalingNaN, int, int& e) const {
-#ifndef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC 23.7 nan
     using Kokkos::Experimental::signaling_NaN;
     constexpr auto nan = signaling_NaN<T>::value;
     auto const zero    = T(0);
     e += (int)!(nan != nan);
     e += (int)!(nan != zero);
-#else
-    (void)e;
-#endif
     use_on_device();
   }
 
   KOKKOS_FUNCTION void use_on_device() const {
-#if defined(KOKKOS_COMPILER_NVCC) || defined(KOKKOS_COMPILER_NVHPC) || \
-    defined(KOKKOS_ENABLE_OPENMPTARGET) || defined(KOKKOS_ENABLE_OPENACC)
+#if defined(KOKKOS_COMPILER_NVCC) || defined(KOKKOS_ENABLE_OPENMPTARGET) || \
+    defined(KOKKOS_ENABLE_OPENACC)
     take_by_value(trait<T>::value);
 #else
     (void)take_address_of(trait<T>::value);
@@ -186,7 +194,7 @@ struct TestNumericTraits<
 #if defined(KOKKOS_ENABLE_CUDA)
     Kokkos::Cuda,
 #elif defined(KOKKOS_ENABLE_SYCL)
-    Kokkos::Experimental::SYCL,
+    Kokkos::SYCL,
 #else
     Kokkos::Experimental::OpenMPTarget,
 #endif
@@ -203,71 +211,44 @@ struct TestNumericTraits<
 };
 #endif
 
+// NOLINTBEGIN(bugprone-unused-raii)
 TEST(TEST_CATEGORY, numeric_traits_infinity) {
-#ifndef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC 23.7
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::half_t, Infinity>();
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t, Infinity>();
-#endif
   TestNumericTraits<TEST_EXECSPACE, float, Infinity>();
   TestNumericTraits<TEST_EXECSPACE, double, Infinity>();
-  // FIXME_NVHPC long double not supported
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double
   TestNumericTraits<TEST_EXECSPACE, long double, Infinity>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_epsilon) {
-#ifndef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC 23.7 bit_comparison_type
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::half_t, Epsilon>();
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t, Epsilon>();
-#endif
   TestNumericTraits<TEST_EXECSPACE, float, Epsilon>();
   TestNumericTraits<TEST_EXECSPACE, double, Epsilon>();
-  // FIXME_NVHPC long double not supported
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, Epsilon>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_round_error) {
-#ifndef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC 23.7 bit_comparison_type
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::half_t, RoundError>();
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t,
                     RoundError>();
-#endif
   TestNumericTraits<TEST_EXECSPACE, float, RoundError>();
   TestNumericTraits<TEST_EXECSPACE, double, RoundError>();
-  // FIXME_NVHPC long double not supported
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, RoundError>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_norm_min) {
-#ifndef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC 23.7 bit_comparison_type
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::half_t, NormMin>();
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t, NormMin>();
-#endif
   TestNumericTraits<TEST_EXECSPACE, float, NormMin>();
   TestNumericTraits<TEST_EXECSPACE, double, NormMin>();
-  // FIXME_NVHPC long double not supported
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, NormMin>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_denorm_min) {
   TestNumericTraits<TEST_EXECSPACE, float, DenormMin>();
   TestNumericTraits<TEST_EXECSPACE, double, DenormMin>();
-  // FIXME_NVHPC long double not supported
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, DenormMin>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_finite_min_max) {
@@ -302,11 +283,8 @@ TEST(TEST_CATEGORY, numeric_traits_finite_min_max) {
   TestNumericTraits<TEST_EXECSPACE, float, FiniteMax>();
   TestNumericTraits<TEST_EXECSPACE, double, FiniteMin>();
   TestNumericTraits<TEST_EXECSPACE, double, FiniteMax>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, FiniteMin>();
   TestNumericTraits<TEST_EXECSPACE, long double, FiniteMax>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_digits) {
@@ -326,10 +304,7 @@ TEST(TEST_CATEGORY, numeric_traits_digits) {
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t, Digits>();
   TestNumericTraits<TEST_EXECSPACE, float, Digits>();
   TestNumericTraits<TEST_EXECSPACE, double, Digits>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, Digits>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_digits10) {
@@ -349,19 +324,13 @@ TEST(TEST_CATEGORY, numeric_traits_digits10) {
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t, Digits10>();
   TestNumericTraits<TEST_EXECSPACE, float, Digits10>();
   TestNumericTraits<TEST_EXECSPACE, double, Digits10>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, Digits10>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_max_digits10) {
   TestNumericTraits<TEST_EXECSPACE, float, MaxDigits10>();
   TestNumericTraits<TEST_EXECSPACE, double, MaxDigits10>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, MaxDigits10>();
-#endif
 }
 TEST(TEST_CATEGORY, numeric_traits_radix) {
   TestNumericTraits<TEST_EXECSPACE, bool, Radix>();
@@ -380,10 +349,7 @@ TEST(TEST_CATEGORY, numeric_traits_radix) {
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t, Radix>();
   TestNumericTraits<TEST_EXECSPACE, float, Radix>();
   TestNumericTraits<TEST_EXECSPACE, double, Radix>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, Radix>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_min_max_exponent) {
@@ -395,11 +361,8 @@ TEST(TEST_CATEGORY, numeric_traits_min_max_exponent) {
   TestNumericTraits<TEST_EXECSPACE, float, MaxExponent>();
   TestNumericTraits<TEST_EXECSPACE, double, MinExponent>();
   TestNumericTraits<TEST_EXECSPACE, double, MaxExponent>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, MinExponent>();
   TestNumericTraits<TEST_EXECSPACE, long double, MaxExponent>();
-#endif
 }
 
 TEST(TEST_CATEGORY, numeric_traits_min_max_exponent10) {
@@ -407,31 +370,31 @@ TEST(TEST_CATEGORY, numeric_traits_min_max_exponent10) {
   TestNumericTraits<TEST_EXECSPACE, float, MaxExponent10>();
   TestNumericTraits<TEST_EXECSPACE, double, MinExponent10>();
   TestNumericTraits<TEST_EXECSPACE, double, MaxExponent10>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, MinExponent10>();
   TestNumericTraits<TEST_EXECSPACE, long double, MaxExponent10>();
-#endif
 }
+
+KOKKOS_IMPL_DISABLE_UNREACHABLE_WARNINGS_PUSH()
 TEST(TEST_CATEGORY, numeric_traits_quiet_and_signaling_nan) {
-#ifndef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC 23.7
+#ifdef KOKKOS_COMPILER_NVHPC  // FIXME_NVHPC
+  GTEST_SKIP() << "This test is known to fail with the NVHPC compiler";
+#endif
+
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::half_t, QuietNaN>();
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::half_t,
                     SignalingNaN>();
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t, QuietNaN>();
   TestNumericTraits<TEST_EXECSPACE, Kokkos::Experimental::bhalf_t,
                     SignalingNaN>();
-#endif
   TestNumericTraits<TEST_EXECSPACE, float, QuietNaN>();
   TestNumericTraits<TEST_EXECSPACE, float, SignalingNaN>();
   TestNumericTraits<TEST_EXECSPACE, double, QuietNaN>();
   TestNumericTraits<TEST_EXECSPACE, double, SignalingNaN>();
-#if !defined(KOKKOS_ENABLE_CUDA) || \
-    !defined(KOKKOS_COMPILER_NVHPC)  // 23.7 long double:
   TestNumericTraits<TEST_EXECSPACE, long double, QuietNaN>();
   TestNumericTraits<TEST_EXECSPACE, long double, SignalingNaN>();
-#endif
 }
+// NOLINTEND(bugprone-unused-raii)
+KOKKOS_IMPL_DISABLE_UNREACHABLE_WARNINGS_POP()
 
 namespace NumericTraitsSFINAE {
 
@@ -442,7 +405,7 @@ struct HasNoSpecialization {};
   using TRAIT##_value_t = decltype(Kokkos::Experimental::TRAIT<T>::value); \
   template <class T>                                                       \
   using has_##TRAIT = Kokkos::is_detected<TRAIT##_value_t, T>;             \
-  static_assert(!has_##TRAIT<HasNoSpecialization>::value, "");
+  static_assert(!has_##TRAIT<HasNoSpecialization>::value);
 
 CHECK_TRAIT_IS_SFINAE_FRIENDLY(infinity)
 CHECK_TRAIT_IS_SFINAE_FRIENDLY(finite_min)
@@ -515,48 +478,42 @@ CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(double, round_error);
 CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(long double, round_error);
 CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(float, denorm_min);
 CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(double, denorm_min);
-
-// FIXME_OPENMPTARGET - The static_assert causes issues on Intel GPUs with the
-// OpenMPTarget backend.
-#if !(defined(KOKKOS_ENABLE_OPENMPTARGET) && \
-      defined(KOKKOS_COMPILER_INTEL_LLVM))
 CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(long double, denorm_min);
-#endif
 
 // clang-format off
-static_assert(Kokkos::Experimental::norm_min<float      >::value == std::numeric_limits<      float>::min(), "");
-static_assert(Kokkos::Experimental::norm_min<double     >::value == std::numeric_limits<     double>::min(), "");
-static_assert(Kokkos::Experimental::norm_min<long double>::value == std::numeric_limits<long double>::min(), "");
+static_assert(Kokkos::Experimental::norm_min<float      >::value == std::numeric_limits<      float>::min());
+static_assert(Kokkos::Experimental::norm_min<double     >::value == std::numeric_limits<     double>::min());
+static_assert(Kokkos::Experimental::norm_min<long double>::value == std::numeric_limits<long double>::min());
 // integer types
-static_assert(Kokkos::Experimental::finite_min<char                  >::value == std::numeric_limits<                  char>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<signed char           >::value == std::numeric_limits<           signed char>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<unsigned char         >::value == std::numeric_limits<         unsigned char>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<short                 >::value == std::numeric_limits<                 short>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<unsigned short        >::value == std::numeric_limits<        unsigned short>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<int                   >::value == std::numeric_limits<                   int>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<unsigned int          >::value == std::numeric_limits<          unsigned int>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<long int              >::value == std::numeric_limits<              long int>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<unsigned long int     >::value == std::numeric_limits<     unsigned long int>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<long long int         >::value == std::numeric_limits<         long long int>::min(), "");
-static_assert(Kokkos::Experimental::finite_min<unsigned long long int>::value == std::numeric_limits<unsigned long long int>::min(), "");
-static_assert(Kokkos::Experimental::finite_max<char                  >::value == std::numeric_limits<                  char>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<signed char           >::value == std::numeric_limits<           signed char>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<unsigned char         >::value == std::numeric_limits<         unsigned char>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<short                 >::value == std::numeric_limits<                 short>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<unsigned short        >::value == std::numeric_limits<        unsigned short>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<int                   >::value == std::numeric_limits<                   int>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<unsigned int          >::value == std::numeric_limits<          unsigned int>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<long int              >::value == std::numeric_limits<              long int>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<unsigned long int     >::value == std::numeric_limits<     unsigned long int>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<long long int         >::value == std::numeric_limits<         long long int>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<unsigned long long int>::value == std::numeric_limits<unsigned long long int>::max(), "");
+static_assert(Kokkos::Experimental::finite_min<char                  >::value == std::numeric_limits<                  char>::min());
+static_assert(Kokkos::Experimental::finite_min<signed char           >::value == std::numeric_limits<           signed char>::min());
+static_assert(Kokkos::Experimental::finite_min<unsigned char         >::value == std::numeric_limits<         unsigned char>::min());
+static_assert(Kokkos::Experimental::finite_min<short                 >::value == std::numeric_limits<                 short>::min());
+static_assert(Kokkos::Experimental::finite_min<unsigned short        >::value == std::numeric_limits<        unsigned short>::min());
+static_assert(Kokkos::Experimental::finite_min<int                   >::value == std::numeric_limits<                   int>::min());
+static_assert(Kokkos::Experimental::finite_min<unsigned int          >::value == std::numeric_limits<          unsigned int>::min());
+static_assert(Kokkos::Experimental::finite_min<long int              >::value == std::numeric_limits<              long int>::min());
+static_assert(Kokkos::Experimental::finite_min<unsigned long int     >::value == std::numeric_limits<     unsigned long int>::min());
+static_assert(Kokkos::Experimental::finite_min<long long int         >::value == std::numeric_limits<         long long int>::min());
+static_assert(Kokkos::Experimental::finite_min<unsigned long long int>::value == std::numeric_limits<unsigned long long int>::min());
+static_assert(Kokkos::Experimental::finite_max<char                  >::value == std::numeric_limits<                  char>::max());
+static_assert(Kokkos::Experimental::finite_max<signed char           >::value == std::numeric_limits<           signed char>::max());
+static_assert(Kokkos::Experimental::finite_max<unsigned char         >::value == std::numeric_limits<         unsigned char>::max());
+static_assert(Kokkos::Experimental::finite_max<short                 >::value == std::numeric_limits<                 short>::max());
+static_assert(Kokkos::Experimental::finite_max<unsigned short        >::value == std::numeric_limits<        unsigned short>::max());
+static_assert(Kokkos::Experimental::finite_max<int                   >::value == std::numeric_limits<                   int>::max());
+static_assert(Kokkos::Experimental::finite_max<unsigned int          >::value == std::numeric_limits<          unsigned int>::max());
+static_assert(Kokkos::Experimental::finite_max<long int              >::value == std::numeric_limits<              long int>::max());
+static_assert(Kokkos::Experimental::finite_max<unsigned long int     >::value == std::numeric_limits<     unsigned long int>::max());
+static_assert(Kokkos::Experimental::finite_max<long long int         >::value == std::numeric_limits<         long long int>::max());
+static_assert(Kokkos::Experimental::finite_max<unsigned long long int>::value == std::numeric_limits<unsigned long long int>::max());
 // floating point types
-static_assert(Kokkos::Experimental::finite_min<float      >::value == -std::numeric_limits<      float>::max(), "");
-static_assert(Kokkos::Experimental::finite_min<double     >::value == -std::numeric_limits<     double>::max(), "");
-static_assert(Kokkos::Experimental::finite_min<long double>::value == -std::numeric_limits<long double>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<float      >::value ==  std::numeric_limits<      float>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<double     >::value ==  std::numeric_limits<     double>::max(), "");
-static_assert(Kokkos::Experimental::finite_max<long double>::value ==  std::numeric_limits<long double>::max(), "");
+static_assert(Kokkos::Experimental::finite_min<float      >::value == -std::numeric_limits<      float>::max());
+static_assert(Kokkos::Experimental::finite_min<double     >::value == -std::numeric_limits<     double>::max());
+static_assert(Kokkos::Experimental::finite_min<long double>::value == -std::numeric_limits<long double>::max());
+static_assert(Kokkos::Experimental::finite_max<float      >::value ==  std::numeric_limits<      float>::max());
+static_assert(Kokkos::Experimental::finite_max<double     >::value ==  std::numeric_limits<     double>::max());
+static_assert(Kokkos::Experimental::finite_max<long double>::value ==  std::numeric_limits<long double>::max());
 // clang-format on
 
 CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_CONSTANT(bool, digits);
@@ -623,15 +580,13 @@ CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_CONSTANT(long double, max_exponent10);
 #undef CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION
 #undef CHECK_SAME_AS_NUMERIC_LIMITS_MEMBER_CONSTANT
 
-#define CHECK_NAN_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(T, TRAIT)             \
-  static_assert(Kokkos::Experimental::TRAIT<T>::value !=                       \
-                    Kokkos::Experimental::TRAIT<T>::value,                     \
-                "");                                                           \
-  static_assert(                                                               \
-      std::numeric_limits<T>::TRAIT() != std::numeric_limits<T>::TRAIT(), ""); \
-  static_assert(Kokkos::Experimental::TRAIT<T>::value !=                       \
-                    std::numeric_limits<T>::TRAIT(),                           \
-                "")
+#define CHECK_NAN_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(T, TRAIT) \
+  static_assert(Kokkos::Experimental::TRAIT<T>::value !=           \
+                Kokkos::Experimental::TRAIT<T>::value);            \
+  static_assert(std::numeric_limits<T>::TRAIT() !=                 \
+                std::numeric_limits<T>::TRAIT());                  \
+  static_assert(Kokkos::Experimental::TRAIT<T>::value !=           \
+                std::numeric_limits<T>::TRAIT())
 
 // Workaround compiler issue error: expression must have a constant value
 // See kokkos/kokkos#4574
@@ -651,14 +606,11 @@ CHECK_NAN_SAME_AS_NUMERIC_LIMITS_MEMBER_FUNCTION(long double, signaling_NaN);
 
 #define CHECK_INSTANTIATED_ON_CV_QUALIFIED_TYPES(T, TRAIT)              \
   static_assert(Kokkos::Experimental::TRAIT<T const>::value ==          \
-                    Kokkos::Experimental::TRAIT<T>::value,              \
-                "");                                                    \
+                Kokkos::Experimental::TRAIT<T>::value);                 \
   static_assert(Kokkos::Experimental::TRAIT<T volatile>::value ==       \
-                    Kokkos::Experimental::TRAIT<T>::value,              \
-                "");                                                    \
+                Kokkos::Experimental::TRAIT<T>::value);                 \
   static_assert(Kokkos::Experimental::TRAIT<T const volatile>::value == \
-                    Kokkos::Experimental::TRAIT<T>::value,              \
-                "")
+                Kokkos::Experimental::TRAIT<T>::value)
 
 #define CHECK_INSTANTIATED_ON_CV_QUALIFIED_TYPES_FLOATING_POINT(TRAIT) \
   CHECK_INSTANTIATED_ON_CV_QUALIFIED_TYPES(float, TRAIT);              \
@@ -706,17 +658,13 @@ CHECK_INSTANTIATED_ON_CV_QUALIFIED_TYPES_FLOATING_POINT(max_exponent10);
 
 #define CHECK_NAN_INSTANTIATED_ON_CV_QUALIFIED_TYPES(T, TRAIT)          \
   static_assert(Kokkos::Experimental::TRAIT<T>::value !=                \
-                    Kokkos::Experimental::TRAIT<T>::value,              \
-                "");                                                    \
+                Kokkos::Experimental::TRAIT<T>::value);                 \
   static_assert(Kokkos::Experimental::TRAIT<T const>::value !=          \
-                    Kokkos::Experimental::TRAIT<T>::value,              \
-                "");                                                    \
+                Kokkos::Experimental::TRAIT<T>::value);                 \
   static_assert(Kokkos::Experimental::TRAIT<T volatile>::value !=       \
-                    Kokkos::Experimental::TRAIT<T>::value,              \
-                "");                                                    \
+                Kokkos::Experimental::TRAIT<T>::value);                 \
   static_assert(Kokkos::Experimental::TRAIT<T const volatile>::value != \
-                    Kokkos::Experimental::TRAIT<T>::value,              \
-                "")
+                Kokkos::Experimental::TRAIT<T>::value)
 
 #define CHECK_NAN_INSTANTIATED_ON_CV_QUALIFIED_TYPES_FLOATING_POINT(TRAIT) \
   CHECK_NAN_INSTANTIATED_ON_CV_QUALIFIED_TYPES(float, TRAIT);              \
@@ -728,3 +676,13 @@ CHECK_NAN_INSTANTIATED_ON_CV_QUALIFIED_TYPES_FLOATING_POINT(signaling_NaN);
 
 #undef CHECK_NAN_INSTANTIATED_ON_CV_QUALIFIED_TYPES_FLOATING_POINT
 #undef CHECK_NAN_INSTANTIATED_ON_CV_QUALIFIED_TYPES
+
+#ifdef KOKKOS_COMPILER_NVCC
+#ifdef __NVCC_DIAG_PRAGMA_SUPPORT__
+#pragma nv_diagnostic pop
+#else
+#ifdef __CUDA_ARCH__
+#pragma diagnostic pop
+#endif
+#endif
+#endif

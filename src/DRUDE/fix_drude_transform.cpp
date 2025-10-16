@@ -24,7 +24,6 @@
 #include "modify.h"
 
 #include <cmath>
-#include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -54,7 +53,7 @@ void FixDrudeTransform<inverse>::init()
   std::string substyle = "direct";
   if (inverse) substyle = "inverse";
 
-  auto fixes = modify->get_fix_by_style("^drude");
+  auto fixes = modify->get_fix_by_style("^drude$");
   if (fixes.size() > 0) fix_drude = dynamic_cast<FixDrude *>(fixes[0]);
   if (!fix_drude)
     error->all(FLERR, "fix drude/transform/{} requires fix drude", substyle);
@@ -87,8 +86,8 @@ void FixDrudeTransform<inverse>::setup(int) {
 
   if (!rmass) {
     if (!mcoeff) mcoeff = new double[ntypes+1];
-    auto mcoeff_loc = new double[ntypes+1];
-    for (int itype=0; itype<=ntypes; itype++) mcoeff_loc[itype] = 2.; // an impossible value: mcoeff is at most 1.
+    auto *mcoeff_loc = new double[ntypes+1];
+    for (int itype=0; itype<=ntypes; itype++) mcoeff_loc[itype] = 2.0; // an impossible value: mcoeff is at most 1.
     for (int i=0; i<nlocal; i++) {
       if (drudetype[type[i]] == DRUDE_TYPE) {
         int j = atom->map(drudeid[i]);
@@ -160,7 +159,7 @@ void FixDrudeTransform<inverse>::real_to_reduced()
 
   if (!rmass) { // TODO: maybe drudetype can be used instead?
     for (int itype=1; itype<=ntypes; itype++)
-      if (mcoeff[itype] < 1.5) mass[itype] *= 1. - mcoeff[itype];
+      if (mcoeff[itype] < 1.5) mass[itype] *= 1.0 - mcoeff[itype];
   }
   for (int i=0; i<nlocal; i++) {
     if (mask[i] & groupbit && drudetype[type[i]] != NOPOL_TYPE) {
@@ -229,16 +228,16 @@ void FixDrudeTransform<inverse>::reduced_to_real()
         idrude = j;
       }
       if (rmass) {
-        double s = sqrt(1. - rmass[idrude]/rmass[icore]);
-        rmass[idrude] = 0.5 * rmass[icore] * (1. - s);
+        double s = sqrt(1.0 - rmass[idrude]/rmass[icore]);
+        rmass[idrude] = 0.5 * rmass[icore] * (1.0 - s);
         mdrude = rmass[idrude];
         rmass[icore] -= mdrude;
         mcore = rmass[icore];
         coeff = mdrude / (mcore + mdrude);
       } else {
-        if (!mcoeff[type[icore]]) { // TODO: should it be > 1.5 ?
-          double s = sqrt(1. - mass[type[idrude]] / mass[type[icore]]);
-          mass[type[idrude]] = 0.5 * mass[type[icore]] * (1. - s);
+        if (mcoeff[type[icore]] == 0.0) { // TODO: should it be > 1.5 ?
+          double s = sqrt(1.0 - mass[type[idrude]] / mass[type[icore]]);
+          mass[type[idrude]] = 0.5 * mass[type[icore]] * (1.0 - s);
           mdrude = mass[type[idrude]];
           mass[type[icore]] -= mdrude;
           mcore = mass[type[icore]];
@@ -263,7 +262,7 @@ void FixDrudeTransform<inverse>::reduced_to_real()
   }
   if (!rmass) {
     for (int itype=1; itype<=ntypes; itype++)
-      if (mcoeff[itype] < 1.5) mass[itype] /= 1. - mcoeff[itype];
+      if (mcoeff[itype] < 1.5) mass[itype] /= 1.0 - mcoeff[itype];
   }
   fix_drude->is_reduced = false;
 }

@@ -12,7 +12,7 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing authors: Ludwig Ahrens-Iwers (TUHH), Shern Tee (UQ), Robert Meißner (TUHH)
+   Contributing authors: Ludwig Ahrens-Iwers (TUHH), Shern Tee (UQ), Robert Meissner (TUHH)
 ------------------------------------------------------------------------- */
 
 #include "fix_electrode_thermo.h"
@@ -29,7 +29,7 @@
 
 using namespace LAMMPS_NS;
 
-#define NUM_GROUPS 2
+static constexpr int NUM_GROUPS = 2;
 static constexpr double SMALL = 0.00001;
 
 /* ----------------------------------------------------------------------- */
@@ -47,7 +47,8 @@ FixElectrodeThermo::FixElectrodeThermo(LAMMPS *lmp, int narg, char **arg) :
   if (thermo_time < SMALL) error->all(FLERR, "Keyword temp not set or zero in electrode/thermo");
 
   thermo_random = new RanMars(lmp, thermo_init);
-  if (group_psi_var_styles[0] == VarStyle::CONST) delta_psi_0 = group_psi[1] - group_psi[0];
+  if (group_psi_var_styles[0] == VarStyle::CONST)
+    delta_psi_0 = group_psi_const[1] - group_psi_const[0];
 }
 
 /* ----------------------------------------------------------------------- */
@@ -75,7 +76,7 @@ void FixElectrodeThermo::compute_macro_matrices()
 void FixElectrodeThermo::pre_update()
 {
   // total electrode charges after last step, required for update psi
-  int const nlocal = atom->nlocal;
+  const int nlocal = atom->nlocal;
   int *mask = atom->mask;
   double *q = atom->q;
   for (int g = 0; g < NUM_GROUPS; g++) {
@@ -102,7 +103,7 @@ void FixElectrodeThermo::update_psi()
   double const delta_psi = group_psi_old[1] - group_psi_old[0];
 
   // target potential difference from input parameters
-  if (group_psi_var_styles[0] != VarStyle::CONST) {
+  if (group_psi_var_styles[0] == VarStyle::EQUAL) {
     delta_psi_0 = input->variable->compute_equal(group_psi_var_ids[1]) -
         input->variable->compute_equal(group_psi_var_ids[0]);
   }

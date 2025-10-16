@@ -34,26 +34,26 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <string>
+#include <exception>
+#include <iterator>
+#include <stdexcept>
 #include <unordered_map>
-#include <vector>
 
 using namespace LAMMPS_NS;
 using namespace MathExtra;
 using MathConst::MY_2PI;
 using MathConst::MY_PI;
 
-static constexpr int MAXLINE = 1024;
-#define SELF_CUTOFF 3
+static constexpr int SELF_CUTOFF = 3;
 static constexpr double SMALL = 1.0e-6;
 static constexpr double SWITCH = 1.0e-4;
 static constexpr double RHOMIN = 10.0;
 
-#define QUAD_FINF 129
-#define QUAD_FSEMI 10
+static constexpr int QUAD_FINF = 129;
+static constexpr int QUAD_FSEMI = 10;
 
-#define BISECTION_STEPS 1000000
-#define BISECTION_EPS 1.0e-15
+static constexpr int BISECTION_STEPS = 1000000;
+static constexpr double BISECTION_EPS = 1.0e-15;
 
 /* ---------------------------------------------------------------------- */
 
@@ -1885,7 +1885,7 @@ void PairMesoCNT::spline_coeff(double **data, double ****coeff, double dx, doubl
 inline double PairMesoCNT::spline(double x, double xstart, double dx, double **coeff,
                                   int coeff_size)
 {
-  int i = ceil((x - xstart) / dx);
+  int i = ceil((x - xstart) / dx); // NOLINT
 
   // linear extrapolation
 
@@ -1914,7 +1914,7 @@ inline double PairMesoCNT::spline(double x, double xstart, double dx, double **c
 inline double PairMesoCNT::dspline(double x, double xstart, double dx, double **coeff,
                                    int coeff_size)
 {
-  int i = ceil((x - xstart) / dx);
+  int i = ceil((x - xstart) / dx); // NOLINT
 
   // constant extrapolation
 
@@ -1943,8 +1943,8 @@ inline double PairMesoCNT::dspline(double x, double xstart, double dx, double **
 inline double PairMesoCNT::spline(double x, double y, double xstart, double ystart, double dx,
                                   double dy, double ****coeff, int coeff_size)
 {
-  int i = ceil((x - xstart) / dx);
-  int j = ceil((y - ystart) / dy);
+  int i = ceil((x - xstart) / dx); // NOLINT
+  int j = ceil((y - ystart) / dy); // NOLINT
 
   // constant extrapolation
 
@@ -1990,8 +1990,8 @@ inline double PairMesoCNT::spline(double x, double y, double xstart, double ysta
 inline double PairMesoCNT::dxspline(double x, double y, double xstart, double ystart, double dx,
                                     double dy, double ****coeff, int coeff_size)
 {
-  int i = ceil((x - xstart) / dx);
-  int j = ceil((y - ystart) / dy);
+  int i = ceil((x - xstart) / dx); // NOLINT
+  int j = ceil((y - ystart) / dy); // NOLINT
 
   // constant extrapolation
 
@@ -2035,8 +2035,8 @@ inline double PairMesoCNT::dxspline(double x, double y, double xstart, double ys
 inline double PairMesoCNT::dyspline(double x, double y, double xstart, double ystart, double dx,
                                     double dy, double ****coeff, int coeff_size)
 {
-  int i = ceil((x - xstart) / dx);
-  int j = ceil((y - ystart) / dy);
+  int i = ceil((x - xstart) / dx); // NOLINT
+  int j = ceil((y - ystart) / dy); // NOLINT
 
   // constant extrapolation
 

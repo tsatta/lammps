@@ -16,7 +16,6 @@
 #include "angle.h"
 #include "atom.h"
 #include "bond.h"
-#include "comm.h"
 #include "compute_chunk_atom.h"
 #include "domain.h"
 #include "error.h"
@@ -86,7 +85,7 @@ void ComputeDipoleTIP4PChunk::init()
     error->all(FLERR, "A pair style must be defined for compute dipole/tip4p/chunk");
 
   int itmp;
-  double *p_qdist = (double *) force->pair->extract("qdist", itmp);
+  auto *p_qdist = (double *) force->pair->extract("qdist", itmp);
   int *p_typeO = (int *) force->pair->extract("typeO", itmp);
   int *p_typeH = (int *) force->pair->extract("typeH", itmp);
   int *p_typeA = (int *) force->pair->extract("typeA", itmp);

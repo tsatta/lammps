@@ -430,7 +430,7 @@ void FixSMD::smd_couple()
 
 void FixSMD::write_restart(FILE *fp)
 {
-#define RESTART_ITEMS 5
+  static constexpr int RESTART_ITEMS = 5;
   double buf[RESTART_ITEMS], fsign;
 
   if (comm->me == 0) {
@@ -451,7 +451,7 @@ void FixSMD::write_restart(FILE *fp)
 
 void FixSMD::restart(char *buf)
 {
-  auto list = (double *)buf;
+  auto *list = (double *)buf;
   r_old = list[0];
   xn=list[1];
   yn=list[2];

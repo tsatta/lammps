@@ -17,7 +17,6 @@
 
 #include "lepton_utils.h"
 
-#include "error.h"
 #include "input.h"
 #include "lammps.h"
 #include "pair_zbl_const.h"
@@ -156,7 +155,7 @@ std::string LeptonUtils::substitute(const std::string &in, LAMMPS_NS::LAMMPS *lm
     vars.insert(name);
   }
 
-  auto variable = lmp->input->variable;
+  auto *variable = lmp->input->variable;
   fmt::dynamic_format_arg_store<fmt::format_context> args;
   for (const auto &v : vars) {
     const char *val = variable->retrieve(v.c_str());
